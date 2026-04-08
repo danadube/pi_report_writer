@@ -1,0 +1,48 @@
+import { ReportType, ReportStatus, type ReportListItem } from "@/types";
+
+export const MOCK_REPORTS: ReportListItem[] = [
+  {
+    id: "rpt_001",
+    report_type: ReportType.BACKGROUND_INVESTIGATION,
+    status: ReportStatus.FINAL,
+    case_name: "Case #2024-0412",
+    subject_name: "John Michael Doe",
+    investigator_name: "Sarah Reyes",
+    report_date: "2024-04-12",
+    created_at: "2024-04-12T10:30:00Z",
+    updated_at: "2024-04-12T15:45:00Z",
+  },
+  {
+    id: "rpt_002",
+    report_type: ReportType.SURVEILLANCE,
+    status: ReportStatus.DRAFT,
+    case_name: "Case #2024-0398",
+    subject_name: "Martha L. Green",
+    investigator_name: "Tom Vargas",
+    report_date: "2024-04-08",
+    created_at: "2024-04-08T08:00:00Z",
+    updated_at: "2024-04-09T11:20:00Z",
+  },
+  {
+    id: "rpt_003",
+    report_type: ReportType.BACKGROUND_INVESTIGATION,
+    status: ReportStatus.DRAFT,
+    case_name: "Case #2024-0401",
+    subject_name: "Carlos R. Mendez",
+    investigator_name: "Sarah Reyes",
+    report_date: "2024-04-10",
+    created_at: "2024-04-10T09:15:00Z",
+    updated_at: "2024-04-10T09:15:00Z",
+  },
+  {
+    id: "rpt_004",
+    report_type: ReportType.SURVEILLANCE,
+    status: ReportStatus.FINAL,
+    case_name: "Case #2024-0375",
+    subject_name: "Angela K. Torres",
+    investigator_name: "Tom Vargas",
+    report_date: "2024-03-28",
+    created_at: "2024-03-28T07:30:00Z",
+    updated_at: "2024-03-29T16:00:00Z",
+  },
+];
