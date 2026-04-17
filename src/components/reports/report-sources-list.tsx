@@ -6,16 +6,25 @@ import { FileText, ExternalLink } from "lucide-react";
 
 interface ReportSourcesListProps {
   sources: ReportSource[];
+  /** When true, show a jump link to the Extraction review section (report detail page). */
+  linkToExtractionReview?: boolean;
 }
 
-export function ReportSourcesList({ sources }: ReportSourcesListProps) {
+export function ReportSourcesList({
+  sources,
+  linkToExtractionReview = false,
+}: ReportSourcesListProps) {
   if (sources.length === 0) {
     return (
-      <p className="text-sm text-[#8b90a0]">No source documents uploaded yet.</p>
+      <p className="text-sm text-[#8b90a0]">
+        No source documents uploaded yet. After upload, structured extraction appears in{" "}
+        <span className="text-[#8b90a0]">Extraction review</span> below.
+      </p>
     );
   }
 
   return (
+    <>
     <ul className="divide-y divide-[#1e2130] rounded-lg border border-[#2a2f42] bg-[#161922]">
       {sources.map((s) => (
         <li
@@ -72,5 +81,16 @@ export function ReportSourcesList({ sources }: ReportSourcesListProps) {
         </li>
       ))}
     </ul>
+    {linkToExtractionReview ? (
+      <p className="text-xs text-[#8b90a0] mt-2">
+        <a
+          href="#extraction"
+          className="text-[#4f7ef5] hover:underline"
+        >
+          View structured extraction
+        </a>
+      </p>
+    ) : null}
+    </>
   );
 }

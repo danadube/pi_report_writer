@@ -9,6 +9,8 @@ export enum ReportStatus {
   ARCHIVED = "ARCHIVED",
 }
 
+import type { ExtractedData } from "./extraction";
+
 export enum SourceDocumentType {
   TLO_COMPREHENSIVE = "TLO_COMPREHENSIVE",
   DMV_RECORDS = "DMV_RECORDS",
@@ -71,6 +73,8 @@ export interface ReportSource {
   extraction_status: ReportSourceExtractionStatus;
   extraction_error: string | null;
   created_at: string;
+  /** Structured rows from extracted_* tables (present on GET /api/reports/[id]). */
+  extracted_data?: ExtractedData;
 }
 
 export type ReportCreateInput = Omit<

@@ -9,6 +9,10 @@ import {
   type Report,
   type ReportSource,
 } from "@/types";
+import {
+  fetchExtractedGroupedBySource,
+  mergeSourcesWithExtracted,
+} from "@/lib/reports/fetch-extracted-for-report";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -60,6 +64,21 @@ async function fetchSourcesForReport(
   };
 }
 
+async function attachExtractedRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  reportId: string,
+  sources: ReportSource[]
+): Promise<{ ok: true; sources: ReportSource[] } | { ok: false; message: string }> {
+  const extracted = await fetchExtractedGroupedBySource(supabase, reportId);
+  if (!extracted.ok) {
+    return extracted;
+  }
+  return {
+    ok: true,
+    sources: mergeSourcesWithExtracted(sources, extracted.bySource),
+  };
+}
+
 /**
  * GET /api/reports/[id] — single report with related sources.
  * PATCH /api/reports/[id] — update report fields (owner only via RLS).
@@ -96,7 +115,11 @@ export async function GET(_request: Request, { params }: RouteParams) {
   if (!sourcesResult.ok) {
     return NextResponse.json({ error: sourcesResult.message }, { status: 500 });
   }
-  const sources = sourcesResult.sources;
+  const withExtracted = await attachExtractedRows(supabase, row.id, sourcesResult.sources);
+  if (!withExtracted.ok) {
+    return NextResponse.json({ error: withExtracted.message }, { status: 500 });
+  }
+  const sources = withExtracted.sources;
 
   const report: Report = {
     id: row.id,
@@ -183,7 +206,15 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (!sourcesResult.ok) {
     return NextResponse.json({ error: sourcesResult.message }, { status: 500 });
   }
-  const sources = sourcesResult.sources;
+  const withExtracted = await attachExtractedRows(
+    supabase,
+    updatedRow.id,
+    sourcesResult.sources
+  );
+  if (!withExtracted.ok) {
+    return NextResponse.json({ error: withExtracted.message }, { status: 500 });
+  }
+  const sources = withExtracted.sources;
 
   const report: Report = {
     id: updatedRow.id,
