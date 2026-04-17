@@ -40,6 +40,21 @@ function mapSourceRow(row: {
   };
 }
 
+/** Temporary: remove block tagged REPORT_API_DEBUG after Preview investigation. */
+const REPORT_API_DEBUG = "[report-api-debug]";
+
+function supabaseProjectHost(): string {
+  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!raw) {
+    return "missing";
+  }
+  try {
+    return new URL(raw).host;
+  } catch {
+    return "invalid_url";
+  }
+}
+
 async function fetchSourcesForReport(
   supabase: Awaited<ReturnType<typeof createClient>>,
   reportId: string
@@ -51,6 +66,11 @@ async function fetchSourcesForReport(
     .order("created_at", { ascending: false });
 
   if (error) {
+    console.error(`${REPORT_API_DEBUG} report_sources query failed`, {
+      reportId,
+      message: error.message,
+      code: error.code,
+    });
     return { ok: false, message: error.message };
   }
 
@@ -75,8 +95,14 @@ export async function GET(_request: Request, { params }: RouteParams) {
   } = await supabase.auth.getUser();
 
   if (!user) {
+    console.error(`${REPORT_API_DEBUG} GET 401 no session user`, {
+      reportId: id,
+      supabaseHost: supabaseProjectHost(),
+    });
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const userIdShort = user.id.slice(0, 8);
 
   const { data: row, error } = await supabase
     .from("reports")
@@ -85,10 +111,23 @@ export async function GET(_request: Request, { params }: RouteParams) {
     .maybeSingle();
 
   if (error) {
+    console.error(`${REPORT_API_DEBUG} GET 500 reports table error`, {
+      reportId: id,
+      userIdShort,
+      supabaseHost: supabaseProjectHost(),
+      message: error.message,
+      code: error.code,
+    });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   if (!row) {
+    console.error(`${REPORT_API_DEBUG} GET 404 reports row null`, {
+      reportId: id,
+      userIdShort,
+      supabaseHost: supabaseProjectHost(),
+      hint: "No row returned: wrong id, different Supabase project/env, or RLS hid the row (anon cannot distinguish hidden vs missing).",
+    });
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -97,6 +136,15 @@ export async function GET(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: sourcesResult.message }, { status: 500 });
   }
   const sources = sourcesResult.sources;
+
+  console.error(`${REPORT_API_DEBUG} GET 200 ok`, {
+    reportId: id,
+    userIdShort,
+    ownerIdShort: row.created_by_user_id.slice(0, 8),
+    ownerMatchesSessionUser: row.created_by_user_id === user.id,
+    sourcesCount: sources.length,
+    supabaseHost: supabaseProjectHost(),
+  });
 
   const report: Report = {
     id: row.id,
