@@ -1,12 +1,8 @@
 /**
- * Server-side PDF text extraction using `pdf-parse` (pdf.js).
+ * Server-side PDF text extraction using `unpdf` (Mozilla PDF.js build for serverless).
  * Works for digitally generated PDFs; image-only / scanned PDFs often yield empty text.
  *
- * `pdf-parse` pulls in pdf.js and native canvas bindings; load it only when extracting
- * so routes like `/api/uploads` do not fail at module init on runtimes without DOM/canvas
- * (e.g. Vercel serverless).
- *
- * @see https://www.npmjs.com/package/pdf-parse
+ * @see https://github.com/unjs/unpdf — edge/serverless–safe; avoids the pdf-parse/canvas/DOM path.
  */
 export const MAX_EXTRACTED_CHARS = 2_000_000;
 
@@ -23,20 +19,20 @@ export async function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> 
     );
   }
 
-  let PDFParse: typeof import("pdf-parse").PDFParse;
+  let extractText: typeof import("unpdf").extractText;
   try {
-    ({ PDFParse } = await import("pdf-parse"));
+    ({ extractText } = await import("unpdf"));
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    throw new Error(`PDF engine failed to load: ${detail}`);
+    throw new Error(`PDF engine (unpdf) failed to load: ${detail}`);
   }
 
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
-    const result = await parser.getText();
-    return typeof result.text === "string" ? result.text : "";
-  } finally {
-    await parser.destroy();
+    const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
+    return typeof text === "string" ? text : "";
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`PDF text extraction failed (unpdf): ${detail}`);
   }
 }
 
