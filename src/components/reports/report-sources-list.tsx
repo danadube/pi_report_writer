@@ -42,7 +42,12 @@ export function ReportSourcesList({ sources }: ReportSourcesListProps) {
                   <span className="block text-amber-400/90 mt-1">{s.extraction_error}</span>
                 ) : null}
                 {s.extraction_status === "complete" ? (
-                  <span className="block text-emerald-400/90 mt-1">Extraction complete</span>
+                  <span className="block text-emerald-400/90 mt-1">
+                    Raw text extracted
+                    {typeof s.extracted_text === "string" && s.extracted_text.length > 0
+                      ? ` (${s.extracted_text.length.toLocaleString()} characters)`
+                      : ""}
+                  </span>
                 ) : null}
               </p>
             </div>

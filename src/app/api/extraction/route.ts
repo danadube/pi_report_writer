@@ -1,11 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
-import { runExtractionStubForSource } from "@/lib/extraction/extraction-pipeline";
+import { runExtractionForSource } from "@/lib/extraction/extraction-pipeline";
 import { NextResponse } from "next/server";
 
 /**
  * POST /api/extraction
  * Body: { sourceId: string }
- * Re-runs extraction for a report_sources row (same stub as post-upload until PDF parsing lands).
+ * Re-runs PDF text extraction for a report_sources row (same logic as post-upload hook).
  *
  * RLS: only sources belonging to the user's reports are visible/updatable.
  */
@@ -65,7 +65,10 @@ export async function POST(request: Request) {
     });
   }
 
-  const result = await runExtractionStubForSource(supabase, src.id, src.report_id);
+  const result = await runExtractionForSource(supabase, {
+    sourceId: src.id,
+    reportId: src.report_id,
+  });
   if (!result.ok) {
     return NextResponse.json({ error: result.message }, { status: 500 });
   }

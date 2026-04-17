@@ -60,6 +60,28 @@ export function buildStoragePublicObjectUrl(
 }
 
 /**
+ * Recover the Storage object key from a public object URL created by
+ * buildStoragePublicObjectUrl / Supabase getPublicUrl (…/object/public/{bucket}/…).
+ */
+export function storageObjectPathFromPublicUrl(
+  fileUrl: string,
+  bucket: string
+): string | null {
+  try {
+    const u = new URL(fileUrl);
+    const marker = `/object/public/${bucket}/`;
+    const i = u.pathname.indexOf(marker);
+    if (i === -1) {
+      return null;
+    }
+    const encoded = u.pathname.slice(i + marker.length);
+    return decodeURIComponent(encoded);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * NEXT_PUBLIC_SUPABASE_URL must be the Supabase API origin (e.g. https://xxxx.supabase.co),
  * not the Vercel app URL. Otherwise getPublicUrl() produces links under your deployment
  * host and clicks return 404 from the Next app.

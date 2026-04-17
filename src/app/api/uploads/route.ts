@@ -7,7 +7,7 @@ import {
   validateSupabaseUrlForStorage,
 } from "@/lib/storage/report-files";
 import { NextResponse } from "next/server";
-import { runExtractionStubForSource } from "@/lib/extraction/extraction-pipeline";
+import { runExtractionForSource } from "@/lib/extraction/extraction-pipeline";
 import { SourceDocumentType, type ReportSource } from "@/types";
 
 /**
@@ -15,7 +15,7 @@ import { SourceDocumentType, type ReportSource } from "@/types";
  * Multipart form: file (PDF), reportId (uuid).
  * Uploads to Supabase Storage and inserts report_sources (source_type TLO_COMPREHENSIVE for TLO PDFs).
  *
- * TODO: Extraction pipeline hook after successful upload.
+ * Post-upload extraction runs in-process (PDF text → report_sources.extracted_text).
  * TODO: If bucket is private, store path and serve signed download URLs from a dedicated route.
  */
 export async function POST(request: Request) {
@@ -112,16 +112,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const ex = await runExtractionStubForSource(
-      supabase,
-      sourceRow.id,
-      reportId
-    );
+    const ex = await runExtractionForSource(supabase, {
+      sourceId: sourceRow.id,
+      reportId,
+      storageObjectPath: objectPath,
+    });
     if (!ex.ok) {
-      console.error("[uploads] extraction stub:", ex.message);
+      console.error("[uploads] extraction:", ex.message);
     }
   } catch (e) {
-    console.error("[uploads] extraction stub threw:", e);
+    console.error("[uploads] extraction threw:", e);
   }
 
   const { data: sourceAfterExtraction } = await supabase
