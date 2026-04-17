@@ -23,6 +23,8 @@ function mapSourceRow(row: {
   file_name: string;
   file_url: string;
   extracted_text: string | null;
+  extraction_status?: string | null;
+  extraction_error?: string | null;
   created_at: string;
 }): ReportSource {
   return {
@@ -32,6 +34,8 @@ function mapSourceRow(row: {
     file_name: row.file_name,
     file_url: row.file_url,
     extracted_text: row.extracted_text,
+    extraction_status: (row.extraction_status ?? "pending") as ReportSource["extraction_status"],
+    extraction_error: row.extraction_error ?? null,
     created_at: row.created_at,
   };
 }

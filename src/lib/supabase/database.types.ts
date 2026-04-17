@@ -72,6 +72,8 @@ export interface Database {
           file_name: string;
           file_url: string;
           extracted_text: string | null;
+          extraction_status: "pending" | "running" | "complete" | "failed";
+          extraction_error: string | null;
           created_at: string;
         };
         Insert: {
@@ -85,6 +87,8 @@ export interface Database {
           file_name?: string;
           file_url?: string;
           extracted_text?: string | null;
+          extraction_status?: "pending" | "running" | "complete" | "failed";
+          extraction_error?: string | null;
           created_at?: string;
         };
         Update: {
@@ -98,6 +102,8 @@ export interface Database {
           file_name?: string;
           file_url?: string;
           extracted_text?: string | null;
+          extraction_status?: "pending" | "running" | "complete" | "failed";
+          extraction_error?: string | null;
           created_at?: string;
         };
         Relationships: [];

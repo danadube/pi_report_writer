@@ -54,6 +54,13 @@ export interface Report extends ReportMetadata {
   sources?: ReportSource[];
 }
 
+/** Matches report_sources.extraction_status (Supabase migration). */
+export type ReportSourceExtractionStatus =
+  | "pending"
+  | "running"
+  | "complete"
+  | "failed";
+
 export interface ReportSource {
   id: string;
   report_id: string;
@@ -61,6 +68,8 @@ export interface ReportSource {
   file_name: string;
   file_url: string;
   extracted_text: string | null;
+  extraction_status: ReportSourceExtractionStatus;
+  extraction_error: string | null;
   created_at: string;
 }
 

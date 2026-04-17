@@ -35,6 +35,15 @@ export function ReportSourcesList({ sources }: ReportSourcesListProps) {
               <p className="text-xs text-[#8b90a0] mt-0.5">
                 {SOURCE_DOCUMENT_TYPE_LABELS[s.source_type]} · Uploaded{" "}
                 {formatDate(s.created_at)}
+                {s.extraction_status === "running" ? (
+                  <span className="block text-[#4f7ef5] mt-1">Extraction running…</span>
+                ) : null}
+                {s.extraction_status === "failed" && s.extraction_error ? (
+                  <span className="block text-amber-400/90 mt-1">{s.extraction_error}</span>
+                ) : null}
+                {s.extraction_status === "complete" ? (
+                  <span className="block text-emerald-400/90 mt-1">Extraction complete</span>
+                ) : null}
               </p>
             </div>
           </div>

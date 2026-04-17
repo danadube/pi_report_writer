@@ -7,6 +7,7 @@ import {
   validateSupabaseUrlForStorage,
 } from "@/lib/storage/report-files";
 import { NextResponse } from "next/server";
+import { runExtractionStubForSource } from "@/lib/extraction/extraction-pipeline";
 import { SourceDocumentType, type ReportSource } from "@/types";
 
 /**
@@ -110,14 +111,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
   }
 
+  try {
+    const ex = await runExtractionStubForSource(
+      supabase,
+      sourceRow.id,
+      reportId
+    );
+    if (!ex.ok) {
+      console.error("[uploads] extraction stub:", ex.message);
+    }
+  } catch (e) {
+    console.error("[uploads] extraction stub threw:", e);
+  }
+
+  const { data: sourceAfterExtraction } = await supabase
+    .from("report_sources")
+    .select("*")
+    .eq("id", sourceRow.id)
+    .single();
+
+  const row = sourceAfterExtraction ?? sourceRow;
+
   const source: ReportSource = {
-    id: sourceRow.id,
-    report_id: sourceRow.report_id,
-    source_type: sourceRow.source_type as ReportSource["source_type"],
-    file_name: sourceRow.file_name,
-    file_url: sourceRow.file_url,
-    extracted_text: sourceRow.extracted_text,
-    created_at: sourceRow.created_at,
+    id: row.id,
+    report_id: row.report_id,
+    source_type: row.source_type as ReportSource["source_type"],
+    file_name: row.file_name,
+    file_url: row.file_url,
+    extracted_text: row.extracted_text,
+    extraction_status: row.extraction_status,
+    extraction_error: row.extraction_error,
+    created_at: row.created_at,
   };
 
   return NextResponse.json(
