@@ -94,10 +94,19 @@ export async function POST(request: Request) {
     });
   }
 
-  const result = await runExtractionForSource(supabase, {
-    sourceId: src.id,
-    reportId: src.report_id,
-  });
+  let result: Awaited<ReturnType<typeof runExtractionForSource>>;
+  try {
+    result = await runExtractionForSource(supabase, {
+      sourceId: src.id,
+      reportId: src.report_id,
+    });
+  } catch (e) {
+    console.error("[extraction] POST runExtractionForSource threw:", e);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Extraction failed" },
+      { status: 500 }
+    );
+  }
   if (!result.ok) {
     return NextResponse.json({ error: result.message }, { status: 500 });
   }

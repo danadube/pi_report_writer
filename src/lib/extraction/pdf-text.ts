@@ -6,9 +6,20 @@ import { PDFParse } from "pdf-parse";
  *
  * @see https://www.npmjs.com/package/pdf-parse
  */
-const MAX_EXTRACTED_CHARS = 2_000_000;
+export const MAX_EXTRACTED_CHARS = 2_000_000;
+
+/** Reject pathological PDFs before pdf.js work (memory / runtime on serverless). */
+export const MAX_PDF_BYTES = 32 * 1024 * 1024;
 
 export async function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> {
+  if (buffer.length === 0) {
+    throw new Error("PDF file is empty");
+  }
+  if (buffer.length > MAX_PDF_BYTES) {
+    throw new Error(
+      `PDF exceeds maximum size (${(MAX_PDF_BYTES / (1024 * 1024)).toFixed(0)}MB)`
+    );
+  }
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
     const result = await parser.getText();

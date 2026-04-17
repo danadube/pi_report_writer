@@ -2,9 +2,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import {
   REPORT_FILES_BUCKET,
+  normalizeStorageObjectPath,
+  resolveReportSourceFileUrl,
   storageObjectPathFromPublicUrl,
 } from "@/lib/storage/report-files";
-import { extractTextFromPdfBuffer, maybeTruncateExtractedText } from "@/lib/extraction/pdf-text";
+import {
+  extractTextFromPdfBuffer,
+  maybeTruncateExtractedText,
+  MAX_EXTRACTED_CHARS,
+  MAX_PDF_BYTES,
+} from "@/lib/extraction/pdf-text";
 import { parseTlo } from "@/lib/extraction/parsers/tlo-parser";
 import { replaceExtractedDataForSource } from "@/lib/extraction/persist-extracted";
 import type { ExtractedData } from "@/types";
@@ -62,6 +69,23 @@ export async function runExtractionForSource(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const { sourceId, reportId, storageObjectPath: pathHint } = params;
 
+  try {
+    return await runExtractionInner(supabase, sourceId, reportId, pathHint);
+  } catch (e) {
+    const msg =
+      e instanceof Error ? e.message : "Extraction failed (unexpected error)";
+    console.error("[extraction] unhandled:", e);
+    await markExtractionFailed(supabase, sourceId, reportId, msg);
+    return { ok: false, message: msg };
+  }
+}
+
+async function runExtractionInner(
+  supabase: Supabase,
+  sourceId: string,
+  reportId: string,
+  pathHint: string | undefined
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const { error: runningErr } = await supabase
     .from("report_sources")
     .update({ extraction_status: "running", extraction_error: null })
@@ -72,7 +96,20 @@ export async function runExtractionForSource(
     return { ok: false, message: runningErr.message };
   }
 
-  let objectPath: string | null = pathHint ?? null;
+  let objectPath: string | null = null;
+
+  const hintTrimmed = typeof pathHint === "string" ? pathHint.trim() : "";
+
+  if (hintTrimmed.length > 0) {
+    const normalized = normalizeStorageObjectPath(hintTrimmed);
+    if (!normalized) {
+      const msg =
+        "Invalid storage path from upload (empty or unsafe path; must not contain '..').";
+      await markExtractionFailed(supabase, sourceId, reportId, msg);
+      return { ok: false, message: msg };
+    }
+    objectPath = normalized;
+  }
 
   if (!objectPath) {
     const { data: row, error: rowErr } = await supabase
@@ -88,14 +125,31 @@ export async function runExtractionForSource(
       return { ok: false, message: msg };
     }
 
-    objectPath = storageObjectPathFromPublicUrl(row.file_url, REPORT_FILES_BUCKET);
-  }
+    const rawUrl = typeof row.file_url === "string" ? row.file_url.trim() : "";
+    if (!rawUrl) {
+      const msg = "Source has no file_url; cannot download from storage.";
+      await markExtractionFailed(supabase, sourceId, reportId, msg);
+      return { ok: false, message: msg };
+    }
 
-  if (!objectPath) {
-    const msg =
-      "Could not resolve storage object path from file_url (check bucket and public URL format).";
-    await markExtractionFailed(supabase, sourceId, reportId, msg);
-    return { ok: false, message: msg };
+    const resolved = resolveReportSourceFileUrl(rawUrl);
+    objectPath = storageObjectPathFromPublicUrl(resolved, REPORT_FILES_BUCKET);
+    if (!objectPath && /^https?:\/\//i.test(rawUrl)) {
+      objectPath = storageObjectPathFromPublicUrl(rawUrl, REPORT_FILES_BUCKET);
+    }
+    if (!objectPath) {
+      const msg =
+        "Could not resolve storage object path from file_url (expected a Supabase public object URL for this project’s bucket, or a storage key under report-files).";
+      await markExtractionFailed(supabase, sourceId, reportId, msg);
+      return { ok: false, message: msg };
+    }
+    const validated = normalizeStorageObjectPath(objectPath);
+    if (!validated) {
+      const msg = "Resolved storage path is invalid.";
+      await markExtractionFailed(supabase, sourceId, reportId, msg);
+      return { ok: false, message: msg };
+    }
+    objectPath = validated;
   }
 
   const { data: blob, error: dlErr } = await supabase.storage
@@ -103,15 +157,30 @@ export async function runExtractionForSource(
     .download(objectPath);
 
   if (dlErr || !blob) {
-    const msg = dlErr?.message ?? "Failed to download file from storage";
+    const msg =
+      dlErr?.message ??
+      "Failed to download file from storage (not found or access denied).";
     console.error("[extraction] storage download:", msg);
+    await markExtractionFailed(supabase, sourceId, reportId, msg);
+    return { ok: false, message: msg };
+  }
+
+  const arrayBuf = await blob.arrayBuffer();
+  if (arrayBuf.byteLength === 0) {
+    const msg = "Downloaded file is empty.";
+    await markExtractionFailed(supabase, sourceId, reportId, msg);
+    return { ok: false, message: msg };
+  }
+
+  if (arrayBuf.byteLength > MAX_PDF_BYTES) {
+    const msg = `File is too large to extract on the server (max ${MAX_PDF_BYTES / (1024 * 1024)}MB).`;
     await markExtractionFailed(supabase, sourceId, reportId, msg);
     return { ok: false, message: msg };
   }
 
   let text: string;
   try {
-    const buf = Buffer.from(await blob.arrayBuffer());
+    const buf = Buffer.from(arrayBuf);
     text = await extractTextFromPdfBuffer(buf);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "PDF text extraction failed";
@@ -123,12 +192,13 @@ export async function runExtractionForSource(
   const trimmed = text.trim();
   if (!trimmed) {
     const msg =
-      "No extractable text (image-only, scanned, or encrypted PDF, or empty document).";
+      "No extractable text (image-only or scanned PDF, encrypted PDF, or empty document).";
     await markExtractionFailed(supabase, sourceId, reportId, msg);
     return { ok: false, message: msg };
   }
 
   const extractedText = maybeTruncateExtractedText(trimmed);
+  const wasTruncated = trimmed.length > MAX_EXTRACTED_CHARS;
 
   const { error: textSaveErr } = await supabase
     .from("report_sources")
@@ -154,8 +224,11 @@ export async function runExtractionForSource(
       e instanceof Error ? e.message : "Structured parse failed (unexpected error)";
     console.error("[extraction] parseTlo:", e);
     await replaceExtractedDataForSource(supabase, reportId, sourceId, EMPTY_EXTRACTED);
-    await markExtractionFailed(supabase, sourceId, reportId, msg);
-    return { ok: false, message: msg };
+    const detail = wasTruncated
+      ? `${msg} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
+      : msg;
+    await markExtractionFailed(supabase, sourceId, reportId, detail);
+    return { ok: false, message: detail };
   }
 
   const persisted = await replaceExtractedDataForSource(
@@ -167,8 +240,11 @@ export async function runExtractionForSource(
   if (!persisted.ok) {
     console.error("[extraction] persist structured:", persisted.message);
     await replaceExtractedDataForSource(supabase, reportId, sourceId, EMPTY_EXTRACTED);
-    await markExtractionFailed(supabase, sourceId, reportId, persisted.message);
-    return { ok: false, message: persisted.message };
+    const detail = wasTruncated
+      ? `${persisted.message} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
+      : persisted.message;
+    await markExtractionFailed(supabase, sourceId, reportId, detail);
+    return { ok: false, message: detail };
   }
 
   const { error: doneErr } = await supabase
@@ -181,8 +257,9 @@ export async function runExtractionForSource(
     .eq("report_id", reportId);
 
   if (doneErr) {
-    await markExtractionFailed(supabase, sourceId, reportId, doneErr.message);
-    return { ok: false, message: doneErr.message };
+    const detail = `Extracted data was saved, but updating status to complete failed: ${doneErr.message}`;
+    await markExtractionFailed(supabase, sourceId, reportId, detail);
+    return { ok: false, message: detail };
   }
 
   return { ok: true };

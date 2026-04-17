@@ -323,7 +323,15 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      delete_extracted_for_source: {
+        Args: {
+          p_report_id: string;
+          p_source_id: string;
+        };
+        Returns: undefined;
+      };
+    };
     Enums: {
       report_type: "BACKGROUND_INVESTIGATION" | "SURVEILLANCE";
       report_status: "DRAFT" | "FINAL" | "ARCHIVED";
