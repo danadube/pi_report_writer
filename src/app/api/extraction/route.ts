@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
  * Re-runs PDF text extraction for a report_sources row (same logic as post-upload hook).
  *
  * RLS: only sources belonging to the user's reports are visible/updatable.
+ * We also verify `reports.created_by_user_id` so behavior stays correct if RLS is misconfigured.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -46,6 +47,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const { data: ownedReport, error: ownedError } = await supabase
+    .from("reports")
+    .select("id")
+    .eq("id", src.report_id)
+    .eq("created_by_user_id", user.id)
+    .maybeSingle();
+
+  if (ownedError) {
+    return NextResponse.json({ error: ownedError.message }, { status: 500 });
+  }
+
+  if (!ownedReport) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   if (src.extraction_status === "running") {
     return NextResponse.json(
       { error: "Extraction already in progress" },
@@ -54,11 +70,24 @@ export async function POST(request: Request) {
   }
 
   if (src.extraction_status === "complete") {
-    const { data: full } = await supabase
+    const { data: full, error: fullError } = await supabase
       .from("report_sources")
       .select("*")
       .eq("id", src.id)
-      .single();
+      .maybeSingle();
+
+    if (fullError) {
+      return NextResponse.json({ error: fullError.message }, { status: 500 });
+    }
+
+    if (!full) {
+      console.error(
+        "[extraction] report_sources row missing when status=complete (id=%s)",
+        src.id
+      );
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
     return NextResponse.json({
       message: "Already extracted",
       source: full,
@@ -77,10 +106,18 @@ export async function POST(request: Request) {
     .from("report_sources")
     .select("*")
     .eq("id", src.id)
-    .single();
+    .maybeSingle();
 
   if (reloadError) {
     return NextResponse.json({ error: reloadError.message }, { status: 500 });
+  }
+
+  if (!updated) {
+    console.error(
+      "[extraction] report_sources row missing after successful run (id=%s)",
+      src.id
+    );
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   return NextResponse.json({ source: updated });
