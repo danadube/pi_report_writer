@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Prerequisites
+
+- **Node.js** >= **20.9** (required by Next.js 16). Use `.nvmrc` with [nvm](https://github.com/nvm-sh/nvm) (`nvm use`) or align your toolchain with `package.json` `engines`.
+
 ## Getting Started
 
 First, run the development server:
