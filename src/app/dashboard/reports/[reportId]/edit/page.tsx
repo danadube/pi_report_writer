@@ -15,15 +15,10 @@ export default async function EditReportPage({ params }: EditReportPageProps) {
   const res = await serverFetch(`/api/reports/${reportId}`);
 
   if (res.status === 404) {
-    console.error("[report-page-debug] serverFetch 404 → notFound()", { reportId });
     notFound();
   }
 
   if (!res.ok) {
-    console.error("[report-page-debug] serverFetch non-OK (not 404)", {
-      reportId,
-      status: res.status,
-    });
     return (
       <div className="max-w-2xl space-y-4">
         <BackLink reportId={reportId} />
