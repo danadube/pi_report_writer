@@ -37,7 +37,8 @@ export interface ReportMetadata {
   client_name: string;
   investigator_name: string;
   subject_name: string;
-  report_date: string;
+  /** ISO date string (YYYY-MM-DD) or null when unset */
+  report_date: string | null;
 }
 
 export interface Report extends ReportMetadata {
@@ -77,7 +78,7 @@ export interface ReportListItem {
   case_name: string;
   subject_name: string;
   investigator_name: string;
-  report_date: string;
+  report_date: string | null;
   created_at: string;
   updated_at: string;
 }

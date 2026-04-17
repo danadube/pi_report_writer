@@ -1,16 +1,21 @@
 import { formatDate, getReportTypeLabel } from "@/lib/utils/reports";
-import type { ReportListItem } from "@/types";
+import type { Report } from "@/types";
 
 interface ReportPrintViewProps {
-  report: ReportListItem;
+  report: Report;
 }
 
 /**
  * Print-safe report layout.
  * Uses inline-friendly Tailwind classes.
- * TODO: Expand sections with real extracted data once connected to Supabase.
+ *
+ * TODO: Pull extracted_* sections into print when extraction is wired.
  */
 export function ReportPrintView({ report }: ReportPrintViewProps) {
+  const summary =
+    report.summary_notes?.trim() ||
+    "No summary added yet.";
+
   return (
     <div className="bg-white text-black max-w-3xl mx-auto p-10 rounded-lg shadow-lg print:shadow-none print:rounded-none print:max-w-none">
       {/* Header */}
@@ -19,22 +24,21 @@ export function ReportPrintView({ report }: ReportPrintViewProps) {
           {getReportTypeLabel(report.report_type)} Report
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          {/* TODO: Render organization name from user profile */}
-          Prepared by: {report.investigator_name}
+          Prepared by: {report.investigator_name || "—"}
         </p>
       </div>
 
       {/* Case Information */}
       <Section title="Case Information">
-        <InfoRow label="Case Name" value={report.case_name} />
+        <InfoRow label="Case Name" value={report.case_name || "—"} />
+        <InfoRow label="Client" value={report.client_name || "—"} />
         <InfoRow label="Report Date" value={formatDate(report.report_date)} />
-        <InfoRow label="Investigator" value={report.investigator_name} />
+        <InfoRow label="Investigator" value={report.investigator_name || "—"} />
       </Section>
 
       {/* Subject Identification */}
       <Section title="Subject Identification">
-        <InfoRow label="Subject Name" value={report.subject_name} />
-        {/* TODO: Render extracted_people fields (DOB, aliases) */}
+        <InfoRow label="Subject Name" value={report.subject_name || "—"} />
       </Section>
 
       {/* TODO: Address History section from extracted_addresses */}
@@ -45,7 +49,7 @@ export function ReportPrintView({ report }: ReportPrintViewProps) {
 
       {/* Investigator Summary */}
       <Section title="Investigator Summary & Notes">
-        <p className="text-sm text-gray-500 italic">No summary added yet.</p>
+        <p className="text-sm text-gray-700 whitespace-pre-wrap">{summary}</p>
       </Section>
 
       {/* Disclaimer */}
@@ -65,7 +69,7 @@ export function ReportPrintView({ report }: ReportPrintViewProps) {
           Investigator Signature
         </p>
         <div className="mt-6 w-56 border-b border-gray-400" />
-        <p className="text-sm text-gray-600 mt-1">{report.investigator_name}</p>
+        <p className="text-sm text-gray-600 mt-1">{report.investigator_name || "—"}</p>
         <p className="text-sm text-gray-400 mt-0.5">
           {formatDate(report.report_date)}
         </p>

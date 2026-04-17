@@ -9,10 +9,52 @@ import { cn } from "@/lib/utils";
 export default function NewReportPage() {
   const router = useRouter();
   const [selectedType, setSelectedType] = useState<ReportType | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleContinue() {
+  async function handleContinue() {
     if (!selectedType) return;
-    router.push(`/dashboard/reports/new/${selectedType.toLowerCase()}`);
+    setCreating(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_type: selectedType,
+          status: "DRAFT",
+          case_name: "",
+          client_name: "",
+          investigator_name: "",
+          subject_name: "",
+          report_date: null,
+          summary_notes: null,
+        }),
+      });
+
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        id?: string;
+      };
+
+      if (!res.ok) {
+        setError(data.error ?? `Could not create report (${res.status})`);
+        return;
+      }
+
+      if (!data.id) {
+        setError("Invalid response from server.");
+        return;
+      }
+
+      router.push(`/dashboard/reports/${data.id}/edit`);
+      router.refresh();
+    } catch {
+      setError("Network error while creating the report.");
+    } finally {
+      setCreating(false);
+    }
   }
 
   return (
@@ -24,10 +66,20 @@ export default function NewReportPage() {
         </p>
       </div>
 
+      {error ? (
+        <div
+          role="alert"
+          className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+        >
+          {error}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {Object.values(REPORT_TEMPLATE_CONFIGS).map((config) => (
           <button
             key={config.reportType}
+            type="button"
             onClick={() => setSelectedType(config.reportType)}
             className={cn(
               "rounded-lg border p-5 text-left transition-all",
@@ -49,13 +101,15 @@ export default function NewReportPage() {
 
       <div className="flex gap-3 pt-2">
         <button
+          type="button"
           onClick={handleContinue}
-          disabled={!selectedType}
+          disabled={!selectedType || creating}
           className="rounded-md bg-[#4f7ef5] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#3d6de0] transition-colors disabled:opacity-40"
         >
-          Continue
+          {creating ? "Creating…" : "Continue"}
         </button>
         <button
+          type="button"
           onClick={() => router.back()}
           className="rounded-md border border-[#2a2f42] px-5 py-2.5 text-sm font-medium text-[#8b90a0] hover:bg-[#1e2130] transition-colors"
         >
