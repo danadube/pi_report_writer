@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ExtractedData } from "@/types";
+import { ExtractionPhoneRows } from "@/components/extraction/extraction-phone-rows";
 
 function InclusionHint({ included }: { included: boolean }) {
   if (included) {
@@ -33,10 +34,16 @@ function EmptyLine({ text }: { text: string }) {
   return <p className="text-sm text-[#6b7080] italic">{text}</p>;
 }
 
+export interface ExtractionReviewReadonlyProps {
+  data: ExtractedData;
+  /** When set, phone rows are interactive (include/exclude persisted via API). */
+  reportId?: string;
+}
+
 /**
- * Read-only extraction snapshot grouped by category (no editing).
+ * Extraction snapshot grouped by category. Phone include/exclude is interactive when `reportId` is passed.
  */
-export function ExtractionReviewReadonly({ data }: { data: ExtractedData }) {
+export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewReadonlyProps) {
   const hasAny =
     data.people.length +
       data.addresses.length +
@@ -104,6 +111,8 @@ export function ExtractionReviewReadonly({ data }: { data: ExtractedData }) {
       <CategoryBlock title="Phones">
         {data.phones.length === 0 ? (
           <EmptyLine text="None extracted." />
+        ) : reportId ? (
+          <ExtractionPhoneRows reportId={reportId} initialPhones={data.phones} />
         ) : (
           <ul className="space-y-1.5">
             {data.phones.map((p) => (

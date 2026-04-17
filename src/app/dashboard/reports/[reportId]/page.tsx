@@ -102,7 +102,7 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
         <ReportSourcesList sources={sources} linkToExtractionReview />
       </div>
 
-      <ReportExtractionReview sources={sources} />
+      <ReportExtractionReview sources={sources} reportId={report.id} />
     </div>
   );
 }

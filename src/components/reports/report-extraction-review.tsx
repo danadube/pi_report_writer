@@ -6,6 +6,7 @@ import { FileText } from "lucide-react";
 
 interface ReportExtractionReviewProps {
   sources: ReportSource[];
+  reportId: string;
 }
 
 function StatusBadge({ status }: { status: ReportSource["extraction_status"] }) {
@@ -31,9 +32,9 @@ function StatusBadge({ status }: { status: ReportSource["extraction_status"] }) 
 }
 
 /**
- * Per–source document extraction output for the report detail view (read-only).
+ * Per–source document extraction output for the report detail view.
  */
-export function ReportExtractionReview({ sources }: ReportExtractionReviewProps) {
+export function ReportExtractionReview({ sources, reportId }: ReportExtractionReviewProps) {
   if (sources.length === 0) {
     return (
       <section id="extraction" className="scroll-mt-10">
@@ -54,8 +55,8 @@ export function ReportExtractionReview({ sources }: ReportExtractionReviewProps)
           Extraction review
         </h2>
         <p className="text-sm text-[#8b90a0] mt-1">
-          Structured data parsed from each source document for this report. Edits and approvals
-          will come in a later pass.
+          Structured data parsed from each source document. Use the toggles under Phones to exclude
+          noisy numbers; other categories are view-only for now.
         </p>
       </div>
 
@@ -97,7 +98,7 @@ export function ReportExtractionReview({ sources }: ReportExtractionReviewProps)
                 ) : null}
 
                 {s.extraction_status === "complete" || s.extraction_status === "failed" ? (
-                  <ExtractionReviewReadonly data={data} />
+                  <ExtractionReviewReadonly data={data} reportId={reportId} />
                 ) : null}
               </div>
             </article>
