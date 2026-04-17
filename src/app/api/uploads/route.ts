@@ -3,6 +3,8 @@ import {
   REPORT_FILES_BUCKET,
   assertPdfFile,
   buildReportObjectPath,
+  buildStoragePublicObjectUrl,
+  validateSupabaseUrlForStorage,
 } from "@/lib/storage/report-files";
 import { NextResponse } from "next/server";
 import { SourceDocumentType, type ReportSource } from "@/types";
@@ -16,6 +18,18 @@ import { SourceDocumentType, type ReportSource } from "@/types";
  * TODO: If bucket is private, store path and serve signed download URLs from a dedicated route.
  */
 export async function POST(request: Request) {
+  const urlCheck = validateSupabaseUrlForStorage(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  if (!urlCheck.ok) {
+    console.error("[uploads] Invalid NEXT_PUBLIC_SUPABASE_URL:", urlCheck.message);
+    return NextResponse.json(
+      {
+        error:
+          "Server misconfiguration: NEXT_PUBLIC_SUPABASE_URL must be your Supabase project URL (see logs).",
+      },
+      { status: 500 }
+    );
+  }
+
   const supabase = await createClient();
 
   const {
@@ -73,9 +87,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: uploadError.message }, { status: 500 });
   }
 
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from(REPORT_FILES_BUCKET).getPublicUrl(objectPath);
+  const publicUrl = buildStoragePublicObjectUrl(
+    urlCheck.url,
+    REPORT_FILES_BUCKET,
+    objectPath
+  );
 
   const sourceInsert = {
     report_id: reportId,

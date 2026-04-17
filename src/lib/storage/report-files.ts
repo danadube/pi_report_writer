@@ -44,3 +44,88 @@ export function buildReportObjectPath(reportId: string, originalFileName: string
   const safe = sanitizeStorageFileName(originalFileName);
   return `reports/${reportId}/${stamp}-${safe}`;
 }
+
+/**
+ * Canonical public URL for an object in a public bucket — same pattern as
+ * `@supabase/storage-js` StorageFileApi.getPublicUrl (object/public/...).
+ */
+export function buildStoragePublicObjectUrl(
+  supabaseProjectUrl: string,
+  bucket: string,
+  objectPath: string
+): string {
+  const base = supabaseProjectUrl.replace(/\/$/, "");
+  const path = objectPath.replace(/^\/+/, "");
+  return encodeURI(`${base}/storage/v1/object/public/${bucket}/${path}`);
+}
+
+/**
+ * NEXT_PUBLIC_SUPABASE_URL must be the Supabase API origin (e.g. https://xxxx.supabase.co),
+ * not the Vercel app URL. Otherwise getPublicUrl() produces links under your deployment
+ * host and clicks return 404 from the Next app.
+ */
+export function validateSupabaseUrlForStorage(
+  supabaseUrl: string | undefined
+): { ok: true; url: string } | { ok: false; message: string } {
+  if (supabaseUrl === undefined || supabaseUrl.trim() === "") {
+    return {
+      ok: false,
+      message: "NEXT_PUBLIC_SUPABASE_URL is missing",
+    };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(supabaseUrl);
+  } catch {
+    return {
+      ok: false,
+      message: "NEXT_PUBLIC_SUPABASE_URL is not a valid absolute URL",
+    };
+  }
+  if (parsed.hostname.endsWith(".vercel.app")) {
+    return {
+      ok: false,
+      message:
+        "NEXT_PUBLIC_SUPABASE_URL must be your Supabase project URL (https://<ref>.supabase.co), not your Vercel deployment URL",
+    };
+  }
+  return { ok: true, url: supabaseUrl.replace(/\/$/, "") };
+}
+
+/**
+ * Normalize href for UI: fix rows where file_url was saved with the wrong origin
+ * (e.g. Vercel) but correct /storage/v1/... path, and resolve relative storage paths.
+ */
+export function resolveReportSourceFileUrl(fileUrl: string): string {
+  const envBase = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "";
+  const trimmed = fileUrl.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      if (
+        envBase &&
+        u.hostname.endsWith(".vercel.app") &&
+        u.pathname.includes("/storage/v1/object/")
+      ) {
+        return new URL(u.pathname + u.search, envBase).href;
+      }
+      return trimmed;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  if (trimmed.startsWith("/")) {
+    return envBase ? `${envBase}${trimmed}` : trimmed;
+  }
+
+  if (envBase) {
+    return buildStoragePublicObjectUrl(envBase, REPORT_FILES_BUCKET, trimmed);
+  }
+
+  return trimmed;
+}

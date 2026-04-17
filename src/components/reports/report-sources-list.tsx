@@ -1,5 +1,6 @@
 import { formatDate } from "@/lib/utils/reports";
 import { SOURCE_DOCUMENT_TYPE_LABELS } from "@/lib/config/report-templates";
+import { resolveReportSourceFileUrl } from "@/lib/storage/report-files";
 import type { ReportSource } from "@/types";
 import { FileText, ExternalLink } from "lucide-react";
 
@@ -39,7 +40,7 @@ export function ReportSourcesList({ sources }: ReportSourcesListProps) {
           </div>
           {s.file_url ? (
             <a
-              href={s.file_url}
+              href={resolveReportSourceFileUrl(s.file_url)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex-shrink-0 inline-flex items-center gap-1 text-xs text-[#4f7ef5] hover:underline"
