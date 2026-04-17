@@ -108,6 +108,195 @@ export interface Database {
         };
         Relationships: [];
       };
+      extracted_people: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          full_name: string;
+          dob: string | null;
+          aliases: string[];
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          full_name?: string;
+          dob?: string | null;
+          aliases?: string[];
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          full_name?: string;
+          dob?: string | null;
+          aliases?: string[];
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
+      extracted_addresses: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          label: string | null;
+          street: string;
+          city: string;
+          state: string;
+          zip: string;
+          date_range_text: string | null;
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          label?: string | null;
+          street?: string;
+          city?: string;
+          state?: string;
+          zip?: string;
+          date_range_text?: string | null;
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          label?: string | null;
+          street?: string;
+          city?: string;
+          state?: string;
+          zip?: string;
+          date_range_text?: string | null;
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
+      extracted_phones: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          phone_number: string;
+          phone_type: string | null;
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          phone_number?: string;
+          phone_type?: string | null;
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          phone_number?: string;
+          phone_type?: string | null;
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
+      extracted_vehicles: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          year: string | null;
+          make: string | null;
+          model: string | null;
+          vin: string | null;
+          plate: string | null;
+          state: string | null;
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          year?: string | null;
+          make?: string | null;
+          model?: string | null;
+          vin?: string | null;
+          plate?: string | null;
+          state?: string | null;
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          year?: string | null;
+          make?: string | null;
+          model?: string | null;
+          vin?: string | null;
+          plate?: string | null;
+          state?: string | null;
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
+      extracted_associates: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          name: string;
+          relationship_label: string | null;
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          name?: string;
+          relationship_label?: string | null;
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          name?: string;
+          relationship_label?: string | null;
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
+      extracted_employment: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          employer_name: string;
+          role_title: string | null;
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          employer_name?: string;
+          role_title?: string | null;
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          employer_name?: string;
+          role_title?: string | null;
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
       user_profiles: {
         Row: {
           id: string;

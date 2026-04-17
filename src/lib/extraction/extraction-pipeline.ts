@@ -5,8 +5,20 @@ import {
   storageObjectPathFromPublicUrl,
 } from "@/lib/storage/report-files";
 import { extractTextFromPdfBuffer, maybeTruncateExtractedText } from "@/lib/extraction/pdf-text";
+import { parseTlo } from "@/lib/extraction/parsers/tlo-parser";
+import { replaceExtractedDataForSource } from "@/lib/extraction/persist-extracted";
+import type { ExtractedData } from "@/types";
 
 type Supabase = SupabaseClient<Database>;
+
+const EMPTY_EXTRACTED: ExtractedData = {
+  people: [],
+  addresses: [],
+  phones: [],
+  vehicles: [],
+  associates: [],
+  employment: [],
+};
 
 const EXTRACTION_ERROR_MAX_LEN = 5000;
 
@@ -35,19 +47,16 @@ async function markExtractionFailed(
 }
 
 /**
- * Downloads the PDF from Supabase Storage, extracts plain text, and saves to
- * `report_sources.extracted_text` with `extraction_status` = complete, or failed on error.
+ * Downloads the PDF from Supabase Storage, extracts plain text, parses TLO-style
+ * entities, persists to extracted_* tables, then marks `extraction_status` complete.
  *
  * Callers should catch/log; upload route must not fail the HTTP response when this fails.
- *
- * TODO: Phase 3 — parseTloReport(rawText) and persist extracted_* tables.
  */
 export async function runExtractionForSource(
   supabase: Supabase,
   params: {
     sourceId: string;
     reportId: string;
-    /** If known (e.g. right after upload), avoids parsing file_url. */
     storageObjectPath?: string;
   }
 ): Promise<{ ok: true } | { ok: false; message: string }> {
@@ -121,20 +130,59 @@ export async function runExtractionForSource(
 
   const extractedText = maybeTruncateExtractedText(trimmed);
 
-  const { error: completeErr } = await supabase
+  const { error: textSaveErr } = await supabase
     .from("report_sources")
     .update({
-      extraction_status: "complete",
-      extraction_error: null,
       extracted_text: extractedText,
+      extraction_status: "running",
+      extraction_error: null,
     })
     .eq("id", sourceId)
     .eq("report_id", reportId);
 
-  if (completeErr) {
-    console.error("[extraction] persist extracted_text:", completeErr.message);
-    await markExtractionFailed(supabase, sourceId, reportId, completeErr.message);
-    return { ok: false, message: completeErr.message };
+  if (textSaveErr) {
+    console.error("[extraction] persist extracted_text:", textSaveErr.message);
+    await markExtractionFailed(supabase, sourceId, reportId, textSaveErr.message);
+    return { ok: false, message: textSaveErr.message };
+  }
+
+  let structured: ExtractedData;
+  try {
+    structured = parseTlo(extractedText);
+  } catch (e) {
+    const msg =
+      e instanceof Error ? e.message : "Structured parse failed (unexpected error)";
+    console.error("[extraction] parseTlo:", e);
+    await replaceExtractedDataForSource(supabase, reportId, sourceId, EMPTY_EXTRACTED);
+    await markExtractionFailed(supabase, sourceId, reportId, msg);
+    return { ok: false, message: msg };
+  }
+
+  const persisted = await replaceExtractedDataForSource(
+    supabase,
+    reportId,
+    sourceId,
+    structured
+  );
+  if (!persisted.ok) {
+    console.error("[extraction] persist structured:", persisted.message);
+    await replaceExtractedDataForSource(supabase, reportId, sourceId, EMPTY_EXTRACTED);
+    await markExtractionFailed(supabase, sourceId, reportId, persisted.message);
+    return { ok: false, message: persisted.message };
+  }
+
+  const { error: doneErr } = await supabase
+    .from("report_sources")
+    .update({
+      extraction_status: "complete",
+      extraction_error: null,
+    })
+    .eq("id", sourceId)
+    .eq("report_id", reportId);
+
+  if (doneErr) {
+    await markExtractionFailed(supabase, sourceId, reportId, doneErr.message);
+    return { ok: false, message: doneErr.message };
   }
 
   return { ok: true };

@@ -42,12 +42,18 @@ export function ReportSourcesList({ sources }: ReportSourcesListProps) {
                   <span className="block text-amber-400/90 mt-1">{s.extraction_error}</span>
                 ) : null}
                 {s.extraction_status === "complete" ? (
-                  <span className="block text-emerald-400/90 mt-1">
-                    Raw text extracted
-                    {typeof s.extracted_text === "string" && s.extracted_text.length > 0
-                      ? ` (${s.extracted_text.length.toLocaleString()} characters)`
-                      : ""}
-                  </span>
+                  <>
+                    <span className="block text-emerald-400/90 mt-1">
+                      Raw text extracted
+                      {typeof s.extracted_text === "string" && s.extracted_text.length > 0
+                        ? ` (${s.extracted_text.length.toLocaleString()} characters)`
+                        : ""}
+                    </span>
+                    <span className="block text-[#8b90a0] mt-0.5 text-[11px] leading-snug">
+                      Structured fields saved to this report where detected (people, addresses,
+                      phones, vehicles, associates, employment).
+                    </span>
+                  </>
                 ) : null}
               </p>
             </div>
