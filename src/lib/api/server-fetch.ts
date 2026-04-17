@@ -5,13 +5,25 @@ import { headers } from "next/headers";
  * hit the same deployment (Preview, production, or local). A project-wide
  * NEXT_PUBLIC_SITE_URL pointing at production breaks Preview if it wins over
  * the actual preview hostname.
+ *
+ * Proxies may send comma-separated X-Forwarded-* values; use the first hop only.
  */
+function firstForwardedValue(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const first = value.split(",")[0]?.trim();
+  return first || null;
+}
+
 function originFromRequestHeaders(headerList: Headers): string | null {
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
+  const host =
+    firstForwardedValue(headerList.get("x-forwarded-host")) ??
+    firstForwardedValue(headerList.get("host"));
   if (!host) {
     return null;
   }
-  let proto = headerList.get("x-forwarded-proto");
+  let proto = firstForwardedValue(headerList.get("x-forwarded-proto"));
   if (!proto) {
     proto =
       host.startsWith("localhost:") || host.startsWith("127.0.0.1:")
