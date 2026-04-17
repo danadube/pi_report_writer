@@ -124,13 +124,30 @@ export async function POST(request: Request) {
     console.error("[uploads] extraction threw:", e);
   }
 
-  const { data: sourceAfterExtraction } = await supabase
+  const {
+    data: sourceAfterExtraction,
+    error: reloadError,
+  } = await supabase
     .from("report_sources")
     .select("*")
     .eq("id", sourceRow.id)
-    .single();
+    .maybeSingle();
 
-  const row = sourceAfterExtraction ?? sourceRow;
+  const reloadFailed = reloadError !== null || sourceAfterExtraction === null;
+
+  if (reloadError) {
+    console.error(
+      "[uploads] failed to reload report_sources after extraction:",
+      reloadError.message
+    );
+  } else if (sourceAfterExtraction === null) {
+    console.error(
+      "[uploads] report_sources row missing on reload (id=%s)",
+      sourceRow.id
+    );
+  }
+
+  const row = reloadFailed ? sourceRow : sourceAfterExtraction;
 
   const source: ReportSource = {
     id: row.id,
@@ -147,6 +164,8 @@ export async function POST(request: Request) {
   return NextResponse.json(
     {
       source,
+      sourceReloadFailed: reloadFailed,
+      ...(reloadError ? { reloadError: reloadError.message } : {}),
       fileUrl: publicUrl,
       path: objectPath,
       bucket: REPORT_FILES_BUCKET,
