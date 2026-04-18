@@ -192,20 +192,42 @@ function extractNameFromLabelLine(line: string): string | null {
   return null;
 }
 
-function findSubjectBlockRanges(lines: string[]): { start: number; end: number }[] {
-  const blocks: { start: number; end: number }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lineHasSubjectMarker(lines[i])) {
-      const start = i;
-      let end = lines.length;
-      for (let j = i + 1; j < lines.length; j++) {
-        if (lineHasSubjectMarker(lines[j])) {
-          end = j;
-          break;
-        }
-      }
-      blocks.push({ start, end });
-      i = end - 1;
+/** Strict TLO subject headers: "Subject N of M:" (colon required). */
+const SUBJECT_HEADER_LINE_RE = /Subject\s+\d+\s+of\s+\d+:/gi;
+
+type SubjectCharBlock = { startChar: number; endChar: number };
+
+/**
+ * Subject blocks from strict header regex on full text. Each block is [startChar, endChar)
+ * (half-open), aligned to match indices — no line-based merge or fallback.
+ */
+function findSubjectBlockRanges(text: string): SubjectCharBlock[] {
+  const re = new RegExp(SUBJECT_HEADER_LINE_RE.source, SUBJECT_HEADER_LINE_RE.flags);
+  const matches = [...text.matchAll(re)];
+  if (matches.length === 0) {
+    return [];
+  }
+
+  const blocks: SubjectCharBlock[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const startChar = matches[i]?.index ?? 0;
+    const endChar =
+      i < matches.length - 1
+        ? (matches[i + 1]?.index ?? text.length)
+        : text.length;
+
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        "[subject-block]",
+        i,
+        text.slice(startChar, Math.min(startChar + 200, text.length))
+      );
+      const endSliceStart = Math.max(0, endChar - 200);
+      console.log("[subject-block-end]", i, text.slice(endSliceStart, endChar));
+    }
+
+    if (endChar > startChar) {
+      blocks.push({ startChar, endChar });
     }
   }
   return blocks;
@@ -493,12 +515,13 @@ function extractIdentityFromSubjectBlockText(blockText: string): PersonIdentityF
 }
 
 /** One row per subject block with name + identity fields from that block’s text. */
-function extractPeopleFromSubjectBlocks(lines: string[]): ExtractedPerson[] {
-  const blocks = findSubjectBlockRanges(lines);
+function extractPeopleFromSubjectBlocks(text: string): ExtractedPerson[] {
+  const blocks = findSubjectBlockRanges(text);
   const out: ExtractedPerson[] = [];
   for (let bi = 0; bi < blocks.length; bi++) {
-    const { start, end } = blocks[bi] ?? { start: 0, end: 0 };
-    const blockLines = lines.slice(start, end);
+    const { startChar, endChar } = blocks[bi] ?? { startChar: 0, endChar: 0 };
+    const blockText = text.slice(startChar, endChar);
+    const blockLines = blockText.split("\n");
     if (blockLines.length === 0) {
       continue;
     }
@@ -506,7 +529,6 @@ function extractPeopleFromSubjectBlocks(lines: string[]): ExtractedPerson[] {
     if (!name) {
       continue;
     }
-    const blockText = blockLines.join("\n");
     const identity = extractIdentityFromSubjectBlockText(blockText);
     const subjectIndex = bi + 1;
     out.push(
@@ -1522,7 +1544,6 @@ function extractPhonesGlobalParenFormat(text: string): ExtractedPhone[] {
 }
 
 function extractPhonesCore(text: string, maxPhones: number): ExtractedPhone[] {
-  const lines = text.split("\n");
   const collected: ExtractedPhone[] = [...extractPhonesGlobalParenFormat(text)];
 
   for (const pattern of PHONE_SECTION_PATTERNS) {
@@ -1540,11 +1561,11 @@ function extractPhonesCore(text: string, maxPhones: number): ExtractedPhone[] {
     }
   }
 
-  const blocks = findSubjectBlockRanges(lines);
+  const blocks = findSubjectBlockRanges(text);
 
-  for (const { start, end } of blocks) {
-    for (let i = start; i < end; i++) {
-      const line = lines[i];
+  for (const { startChar, endChar } of blocks) {
+    const blockText = text.slice(startChar, endChar);
+    for (const line of blockText.split("\n")) {
       if (isCurrentOtherPhonesAtAddressLine(line)) {
         continue;
       }
@@ -1563,8 +1584,7 @@ function extractPhonesCore(text: string, maxPhones: number): ExtractedPhone[] {
 }
 
 function extractPhones(text: string): ExtractedPhone[] {
-  const lines = text.split("\n");
-  const subjectBlockCount = findSubjectBlockRanges(lines).length;
+  const subjectBlockCount = findSubjectBlockRanges(text).length;
   const maxPhones =
     subjectBlockCount >= 2 ? MAX_PHONES_MULTI_SUBJECT : MAX_PHONES_RETURNED;
   return extractPhonesCore(text, maxPhones);
@@ -1778,17 +1798,17 @@ function extractEmailsFromText(text: string): ExtractedEmail[] {
 }
 
 /**
- * TLO parse: with 2+ subject blocks, phones/addresses/emails/associates/vehicles/employment
- * are extracted only from each block’s text; subject_index is set in that loop.
- * Otherwise one pass on the full document with subject_index 1.
+ * TLO parse: when any `Subject N of M:` header is found, entity extraction is scoped to each
+ * block’s lines only; subject_index is set in that loop. With no such headers, one full-document pass
+ * with subject_index 1.
  */
 export function parseTlo(rawText: string): ExtractedData {
   const text = normalizeExtractedText(rawText);
   const lines = text.split("\n");
-  const subjectBlocks = findSubjectBlockRanges(lines);
+  const subjectBlocks = findSubjectBlockRanges(text);
 
   const people = dedupePeople([
-    ...extractPeopleFromSubjectBlocks(lines),
+    ...extractPeopleFromSubjectBlocks(text),
     ...extractPeopleFromSubjectColonPattern(text),
     ...extractPeopleGlobal(lines),
   ]);
@@ -1800,7 +1820,7 @@ export function parseTlo(rawText: string): ExtractedData {
   let vehicles: ExtractedVehicle[];
   let employment: ExtractedEmployment[];
 
-  if (subjectBlocks.length >= 2) {
+  if (subjectBlocks.length > 0) {
     addresses = [];
     associates = [];
     phones = [];
@@ -1808,9 +1828,12 @@ export function parseTlo(rawText: string): ExtractedData {
     vehicles = [];
     employment = [];
     for (let bi = 0; bi < subjectBlocks.length; bi++) {
-      const { start, end } = subjectBlocks[bi] ?? { start: 0, end: 0 };
-      const blockLines = lines.slice(start, end);
-      const blockText = blockLines.join("\n");
+      const { startChar, endChar } = subjectBlocks[bi] ?? {
+        startChar: 0,
+        endChar: 0,
+      };
+      const blockText = text.slice(startChar, endChar);
+      const blockLines = blockText.split("\n");
       const subjectIndex = bi + 1;
 
       const blockAddresses = extractAddressesGlobal(blockText, blockLines);
