@@ -14,17 +14,15 @@ function id(): string {
   return crypto.randomUUID();
 }
 
-/** US phone numbers (loose); used only in section-aware contexts — not whole-document scan. */
+/** US phone numbers (loose); section chunks + fallback scans. */
 const PHONE_RE =
   /(?:\+1[-.\s]?)?(?:\(?\d{3}\)[-.\s]?|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}\b/g;
 
 /** 17-char VIN (no I/O/Q). */
 const VIN_RE = /\b([A-HJ-NPR-Z0-9]{17})\b/gi;
 
-/** Line starts with "Subject N of M" (TLO); allow trailing text on same line. */
 const SUBJECT_LINE_RE = /^\s*Subject\s+\d+\s+of\s+\d+\b/i;
 
-/** PDF text often prefixes the same line ("Page 3 … Subject 1 of 2"). */
 function lineHasSubjectMarker(line: string): boolean {
   const t = line.trim();
   if (SUBJECT_LINE_RE.test(t)) {
@@ -44,16 +42,11 @@ function normalizeExtractedText(raw: string): string {
 const CITY_ST_ZIP_RE =
   /^([A-Za-z][A-Za-z\s'.-]+),\s*([A-Z]{2})\s+(\d{5})(?:-(\d{4}))?\s*$/;
 
-/** City ST  ZIP (no comma before state) — common in PDF dumps */
 const CITY_ST_ZIP_NO_COMMA_RE =
   /^([A-Za-z][A-Za-z\s'.-]+?)\s+([A-Z]{2})\s+(\d{5})(?:-(\d{4}))?\s*$/;
 
 const DATE_RANGE_HINT_RE =
   /\b(?:Present|CURRENT|\d{1,2}\/\d{4}|\d{4})\b.*(?:[-–—]|through|to)\b.*\b(?:Present|CURRENT|\d{1,2}\/\d{4}|\d{4})\b/i;
-
-/** Lines to skip when hunting the first subject name after "Subject N of M". */
-const SUBJECT_SKIP_LINE_RE =
-  /^(?:Report|Run|Search|Page|Case|File|Date|Time|Order|Reference|Transaction|Record)\b/i;
 
 function normalizePhoneDigits(s: string): string {
   return s.replace(/\D/g, "").slice(-10);
@@ -85,239 +78,6 @@ function isCurrentOtherPhonesAtAddressLine(line: string): boolean {
   return /Current\s+Other\s+Phones\s+at\s+address/i.test(line);
 }
 
-function isLikelyPersonNameLine(line: string): boolean {
-  const t = line.trim();
-  if (t.length < 3 || t.length > 100) {
-    return false;
-  }
-  if (/https?:\/\//i.test(t) || t.includes("@")) {
-    return false;
-  }
-  if (/^(?:DOB|SSN|AKA|PHONE|PAGE|SUBJECT|REPORT|RUN\s+DATE)\b/i.test(t)) {
-    return false;
-  }
-  const digits = t.replace(/\D/g, "");
-  if (digits.length >= 10 && (PHONE_RE.test(t) || /\(\d{3}\)/.test(t))) {
-    return false;
-  }
-  if (/^\d[\d\s/.-]+$/.test(t) && !/[A-Za-z]{2,}/.test(t)) {
-    return false;
-  }
-  // "LAST, FIRST" or title case / ALL CAPS name tokens
-  if (/^[A-Z][A-Z\s,'.-]+$/i.test(t) && /[A-Za-z]/.test(t)) {
-    return true;
-  }
-  if (/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/.test(t)) {
-    return true;
-  }
-  if (/^[A-Z][a-z]+,\s*[A-Z]/.test(t)) {
-    return true;
-  }
-  return false;
-}
-
-/** Explicit "Name:" style lines common in TLO subject headers */
-function extractNameFromLabelLine(line: string): string | null {
-  const m = line.match(
-    /^(?:Reported\s+)?(?:Primary\s+)?(?:Name|Subject\s+Name|Primary\s+Subject|Reported\s+Name)\s*[:#]\s*(.+)$/i
-  );
-  if (m?.[1]) {
-    const n = normalizeName(m[1]);
-    if (n.length >= 2 && n.length <= 120 && !/^[\d\s./-]+$/.test(n)) {
-      return n;
-    }
-  }
-  return null;
-}
-
-function extractDobFromLine(line: string): string | null {
-  const m = line.match(
-    /(?:DOB|DATE\s+OF\s+BIRTH|BIRTH\s*DATE)\s*[:]?\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i
-  );
-  return m?.[1]?.trim() ?? null;
-}
-
-function findSubjectBlockRanges(lines: string[]): { start: number; end: number }[] {
-  const blocks: { start: number; end: number }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lineHasSubjectMarker(lines[i])) {
-      const start = i;
-      let end = lines.length;
-      for (let j = i + 1; j < lines.length; j++) {
-        if (lineHasSubjectMarker(lines[j])) {
-          end = j;
-          break;
-        }
-      }
-      blocks.push({ start, end });
-      i = end - 1;
-    }
-  }
-  return blocks;
-}
-
-/** Subject N of M blocks: one person per block with primary + aliases (not one person per name line). */
-function extractSubjectBlocks(text: string): ExtractedPerson[] {
-  const lines = text.split("\n");
-  const blocks = findSubjectBlockRanges(lines);
-
-  if (blocks.length === 0) {
-    return extractSubjectPersonLegacy(text);
-  }
-
-  const people: ExtractedPerson[] = [];
-  for (const { start, end } of blocks) {
-    const chunk = lines.slice(start, end).join("\n");
-    let dob: string | null = null;
-    let primary: string | null = null;
-    const aliases: string[] = [];
-    const aliasSet = new Set<string>();
-
-    const pushAlias = (raw: string) => {
-      const n = normalizeName(raw);
-      if (!n || n.length < 2) {
-        return;
-      }
-      if (primary && n.toUpperCase() === primary.toUpperCase()) {
-        return;
-      }
-      const key = n.toUpperCase();
-      if (aliasSet.has(key)) {
-        return;
-      }
-      aliasSet.add(key);
-      aliases.push(n);
-    };
-
-    for (const rawLine of lines.slice(start + 1, end)) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
-      }
-      if (/^Possible\s+Relatives\b/i.test(line)) {
-        break;
-      }
-      const inlineDob = extractDobFromLine(line);
-      if (inlineDob) {
-        dob = inlineDob;
-      }
-      const labeledName = extractNameFromLabelLine(line);
-      if (labeledName) {
-        if (!primary) {
-          primary = labeledName.slice(0, 120);
-        } else {
-          pushAlias(labeledName);
-        }
-        continue;
-      }
-      const obs = line.match(
-        /^(?:Observed\s+Names?|Also\s+Known|AKA|Possible\s+Names?)\s*:?\s*(.+)$/i
-      );
-      if (obs?.[1]) {
-        obs[1]
-          .split(/[,;|]/)
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .forEach((p) => {
-            if (isLikelyPersonNameLine(p)) {
-              pushAlias(p);
-            }
-          });
-        continue;
-      }
-      if (/^(?:DOB|DATE\s+OF\s+BIRTH)\b/i.test(line)) {
-        continue;
-      }
-      if (SUBJECT_SKIP_LINE_RE.test(line)) {
-        continue;
-      }
-      if (lineLooksLikeSectionHeader(line) && !isLikelyPersonNameLine(line)) {
-        continue;
-      }
-      if (!primary && isLikelyPersonNameLine(line)) {
-        primary = normalizeName(line).slice(0, 120);
-        continue;
-      }
-      if (primary && isLikelyPersonNameLine(line)) {
-        pushAlias(line);
-      }
-    }
-
-    if (primary) {
-      people.push({
-        id: id(),
-        report_id: PLACEHOLDER_REPORT,
-        source_id: null,
-        full_name: primary,
-        dob,
-        aliases: aliases.slice(0, 24),
-        include_in_report: true,
-      });
-    } else if (chunk.length > 20) {
-      const legacy = extractSubjectPersonLegacy(chunk);
-      for (const p of legacy) {
-        people.push(p);
-      }
-    }
-  }
-
-  return people;
-}
-
-/** Legacy single-subject heuristics when no "Subject X of Y" markers exist. */
-function extractSubjectPersonLegacy(text: string): ExtractedPerson[] {
-  const upper = text.toUpperCase();
-  const people: ExtractedPerson[] = [];
-
-  const nameMatch =
-    text.match(/(?:^|\n)\s*(?:SUBJECT|NAME|PRIMARY)\s*[#:]?\s*([^\n]+)/i) ??
-    text.match(/(?:^|\n)\s*FULL\s*NAME\s*[:]?\s*([^\n]+)/i);
-  let fullName = nameMatch?.[1]?.trim() ?? "";
-  if (fullName.length > 120) {
-    fullName = fullName.slice(0, 120);
-  }
-
-  const dobMatch = text.match(
-    /(?:DOB|DATE\s+OF\s+BIRTH|BIRTH\s*DATE)\s*[:]?\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i
-  );
-  const dob = dobMatch?.[1]?.trim() ?? null;
-
-  const akaMatch = text.match(/(?:AKA|ALIASES?|Observed\s+Names?)\s*[:]?\s*([^\n]+)/i);
-  const aliases: string[] = [];
-  if (akaMatch?.[1]) {
-    akaMatch[1]
-      .split(/[,;|]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 12)
-      .forEach((a) => aliases.push(a));
-  }
-
-  if (!fullName && upper.includes("TLO")) {
-    const line = text
-      .split("\n")
-      .map((l) => l.trim())
-      .find((l) => l.length > 3 && isLikelyPersonNameLine(l));
-    if (line) {
-      fullName = line.slice(0, 120);
-    }
-  }
-
-  if (fullName) {
-    people.push({
-      id: id(),
-      report_id: PLACEHOLDER_REPORT,
-      source_id: null,
-      full_name: fullName,
-      dob,
-      aliases,
-      include_in_report: true,
-    });
-  }
-
-  return people;
-}
-
 function isStreetLine(s: string): boolean {
   const t = s.trim();
   if (t.length < 4 || t.length > 120) {
@@ -333,7 +93,6 @@ function isStreetLine(s: string): boolean {
   );
 }
 
-/** Second line of a two-line street (Apt / Unit / Suite) before city/state line. */
 function isUnitContinuationLine(s: string): boolean {
   const t = s.trim();
   if (t.length < 2 || t.length > 80) {
@@ -373,7 +132,6 @@ function sliceAfterHeader(text: string, headerRe: RegExp): string | null {
   return text.slice(m.index + m[0].length);
 }
 
-/** Text until next major section header line. */
 function takeSectionChunk(chunk: string, maxLen = 20000): string {
   const lines = chunk.split("\n");
   const buf: string[] = [];
@@ -391,6 +149,256 @@ function takeSectionChunk(chunk: string, maxLen = 20000): string {
     }
   }
   return buf.join("\n").trim();
+}
+
+function extractDobFromLine(line: string): string | null {
+  const m = line.match(
+    /(?:DOB|DATE\s+OF\s+BIRTH|BIRTH\s*DATE)\s*[:]?\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i
+  );
+  return m?.[1]?.trim() ?? null;
+}
+
+function extractNameFromLabelLine(line: string): string | null {
+  const m = line.match(
+    /^(?:Reported\s+)?(?:Primary\s+)?(?:Name|Subject\s+Name|Primary\s+Subject|Reported\s+Name)\s*[:#]\s*(.+)$/i
+  );
+  if (m?.[1]) {
+    const n = normalizeName(m[1]);
+    if (n.length >= 2 && n.length <= 120 && !/^[\d\s./-]+$/.test(n)) {
+      return n;
+    }
+  }
+  return null;
+}
+
+function findSubjectBlockRanges(lines: string[]): { start: number; end: number }[] {
+  const blocks: { start: number; end: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lineHasSubjectMarker(lines[i])) {
+      const start = i;
+      let end = lines.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lineHasSubjectMarker(lines[j])) {
+          end = j;
+          break;
+        }
+      }
+      blocks.push({ start, end });
+      i = end - 1;
+    }
+  }
+  return blocks;
+}
+
+// --- Global noise / confidence ------------------------------------------------
+
+const NOISE_START_RE =
+  /^(?:page|report|run|search|order|reference|transaction|file|case|copyright|©|tlo|transunion|experian)\b/i;
+
+function isNoiseLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 2) {
+    return true;
+  }
+  if (/https?:\/\//i.test(t) || t.includes("@")) {
+    return true;
+  }
+  if (NOISE_START_RE.test(t)) {
+    return true;
+  }
+  const digits = t.replace(/\D/g, "");
+  if (digits.length >= 10 && PHONE_RE.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+/** 2–4 ALL-CAPS words, typical TLO subject / relative names. */
+function isAllCapsNameWords(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 5 || t.length > 85) {
+    return false;
+  }
+  if (/^\d/.test(t)) {
+    return false;
+  }
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) {
+    return false;
+  }
+  for (const w of words) {
+    if (!/^[A-Z][A-Z'.-]*$/.test(w)) {
+      return false;
+    }
+  }
+  if (isStreetLine(t)) {
+    return false;
+  }
+  return true;
+}
+
+function isTitleCaseNameLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 5 || t.length > 90) {
+    return false;
+  }
+  return /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}$/.test(t);
+}
+
+function makePerson(fullName: string, dob: string | null): ExtractedPerson {
+  return {
+    id: id(),
+    report_id: PLACEHOLDER_REPORT,
+    source_id: null,
+    full_name: fullName.slice(0, 120),
+    dob,
+    aliases: [],
+    include_in_report: true,
+  };
+}
+
+function dedupePeople(rows: ExtractedPerson[]): ExtractedPerson[] {
+  const seen = new Set<string>();
+  const out: ExtractedPerson[] = [];
+  for (const p of rows) {
+    const k = p.full_name.toUpperCase().replace(/\s+/g, " ");
+    if (seen.has(k) || out.length >= 32) {
+      continue;
+    }
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
+/** A: labeled names, ALL CAPS / title names near "Subject N of M", and DOB/Age following lines. */
+function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
+  const found: ExtractedPerson[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const labeled = extractNameFromLabelLine(lines[i]);
+    if (labeled) {
+      let dob: string | null = null;
+      for (let k = i; k < Math.min(i + 4, lines.length); k++) {
+        const d = extractDobFromLine(lines[k]);
+        if (d) {
+          dob = d;
+          break;
+        }
+      }
+      found.push(makePerson(labeled, dob));
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!lineHasSubjectMarker(lines[i])) {
+      continue;
+    }
+    let dob: string | null = null;
+    for (let j = i + 1; j < Math.min(i + 18, lines.length); j++) {
+      const line = lines[j].trim();
+      if (!line) {
+        continue;
+      }
+      const d = extractDobFromLine(line);
+      if (d) {
+        dob = d;
+      }
+      const lab = extractNameFromLabelLine(line);
+      if (lab) {
+        found.push(makePerson(lab, dob));
+        break;
+      }
+      if (isNoiseLine(line)) {
+        continue;
+      }
+      if (lineLooksLikeSectionHeader(line) && !isAllCapsNameWords(line) && !isTitleCaseNameLine(line)) {
+        continue;
+      }
+      if (isAllCapsNameWords(line) || isTitleCaseNameLine(line)) {
+        found.push(makePerson(line, dob));
+        break;
+      }
+    }
+  }
+
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i].trim();
+    const next = lines[i + 1].trim();
+    if (!line || line.length > 100 || isNoiseLine(line)) {
+      continue;
+    }
+    const hasDobNext =
+      /\b(?:DOB|DATE\s+OF\s+BIRTH|Age)\b/i.test(next) ||
+      /\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/.test(next) ||
+      /\bAge\s*:\s*\d+/.test(next);
+    if (!hasDobNext) {
+      continue;
+    }
+    if (!(isAllCapsNameWords(line) || isTitleCaseNameLine(line))) {
+      continue;
+    }
+    const dob = extractDobFromLine(next) ?? extractDobFromLine(line);
+    found.push(makePerson(line, dob));
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (isNoiseLine(line) || extractNameFromLabelLine(lines[i])) {
+      continue;
+    }
+    if (isAllCapsNameWords(line)) {
+      found.push(makePerson(line, null));
+    }
+  }
+
+  return dedupePeople(found);
+}
+
+// --- Addresses: single-line "street, city, ST ZIP" anywhere + two-line pairs ----
+
+/** Embedded or standalone: number + street fragment, city, state zip */
+const SINGLE_LINE_ADDR_RE =
+  /\b(\d{1,6}\s+[A-Za-z0-9#][^,\n]{1,85}?),\s*([A-Za-z][A-Za-z\s'.-]{1,45}),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/g;
+
+function extractAddressesSingleLine(text: string): ExtractedAddress[] {
+  const out: ExtractedAddress[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  const re = new RegExp(SINGLE_LINE_ADDR_RE.source, "g");
+  while ((m = re.exec(text)) !== null) {
+    const street = normalizeName(m[1]);
+    const city = normalizeName(m[2]);
+    const state = m[3];
+    const zip = m[4];
+    if (street.length < 4 || city.length < 2) {
+      continue;
+    }
+    if (/\bAge\s*:/i.test(street)) {
+      continue;
+    }
+    if (/^\d{1,2}\s+Flat\b/i.test(street)) {
+      continue;
+    }
+    const key = `${street}|${city}|${state}|${zip}`;
+    if (seen.has(key) || out.length >= 50) {
+      continue;
+    }
+    seen.add(key);
+    out.push({
+      id: id(),
+      report_id: PLACEHOLDER_REPORT,
+      source_id: null,
+      label: null,
+      street,
+      city,
+      state,
+      zip,
+      date_range_text: null,
+      include_in_report: true,
+    });
+  }
+  return out;
 }
 
 function extractAddressesFromLines(
@@ -467,79 +475,69 @@ function extractAddressesFromLines(
   return out;
 }
 
-const ADDRESS_SECTION_HEADERS: RegExp[] = [
-  /(?:^|\n)\s*(?:Residential\s+)?Address\s+History(?:\s*\([^)]*\))?/im,
-  /(?:^|\n)\s*Residential\s+Address(?:es)?\s+History/im,
-  /(?:^|\n)\s*Mailing\s+Address(?:es)?/im,
-  /(?:^|\n)\s*Current\s+Address(?:es)?(?:\s+Information)?/im,
-];
-
-/** Address History (...) and DL / ID-adjacent blocks; excludes Current Other Phones metadata lines. */
-function extractAddresses(text: string): ExtractedAddress[] {
-  const all: ExtractedAddress[] = [];
+function dedupeAddresses(rows: ExtractedAddress[]): ExtractedAddress[] {
   const seen = new Set<string>();
-
-  const pushUnique = (rows: ExtractedAddress[]) => {
-    for (const a of rows) {
-      const k = `${a.street}|${a.city}|${a.state}|${a.zip}`;
-      if (seen.has(k)) {
-        continue;
-      }
-      seen.add(k);
-      all.push(a);
+  const out: ExtractedAddress[] = [];
+  for (const a of rows) {
+    const k = `${a.street}|${a.city}|${a.state}|${a.zip}`.toUpperCase();
+    if (seen.has(k) || out.length >= 60) {
+      continue;
     }
-  };
-
-  for (const headerRe of ADDRESS_SECTION_HEADERS) {
-    const ahChunk = sliceAfterHeader(text, headerRe);
-    if (ahChunk) {
-      const section = takeSectionChunk(ahChunk);
-      const lines = section.split("\n").filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
-      pushUnique(extractAddressesFromLines(lines, "Address history"));
-    }
+    seen.add(k);
+    out.push(a);
   }
-
-  const dlIdx = text.search(
-    /(?:^|\n)\s*(?:DRIVER'?S?\s+LICENSE|D\s*\/\s*L|STATE\s+(?:ID|IDENTIFICATION)|\bID\s+(?:CARD|NUMBER)|IDENTIFICATION|LICENSE\s+(?:NUMBER|#)|\bDL\s*#)/im
-  );
-  if (dlIdx >= 0) {
-    const window = text.slice(dlIdx, dlIdx + 5000);
-    const lines = window.split("\n").filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
-    pushUnique(extractAddressesFromLines(lines, "License / ID"));
-  }
-
-  return all.slice(0, 60);
+  return out;
 }
 
-const RELATIVES_SECTION_HEADER =
-  /(?:^|\n)\s*(?:Possible\s+Relatives|Known\s+Relatives|Possible\s+Associates|Relatives\s+and\s+Associates)\b/i;
+function extractAddressesGlobal(text: string, lines: string[]): ExtractedAddress[] {
+  const single = extractAddressesSingleLine(text);
+  const filtered = lines.filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
+  const twoLine = extractAddressesFromLines(filtered, null);
+  return dedupeAddresses([...single, ...twoLine]);
+}
 
-function parseRelativeLinesIntoAssociates(
-  sectionLines: string[],
-  seen: Set<string>
-): ExtractedAssociate[] {
+// --- Associates: name + birth year + Age, or name + Age -----------------------
+
+const NAME_YEAR_AGE_RE =
+  /^(.+?)\s+(\d{4})\s+Age\s*:\s*\d+/i;
+
+const NAME_AGE_ONLY_RE = /^(.+?)\s+Age\s*:\s*\d+/i;
+
+function cleanAssociateName(raw: string): string | null {
+  const n = normalizeName(raw);
+  if (n.length < 4 || n.length > 120) {
+    return null;
+  }
+  if (/\d{3}-\d{4}/.test(n) || PHONE_RE.test(n)) {
+    return null;
+  }
+  if (isStreetLine(n)) {
+    return null;
+  }
+  const words = n.split(/\s+/).filter(Boolean);
+  if (words.length < 2) {
+    return null;
+  }
+  return n.slice(0, 200);
+}
+
+function extractAssociatesGlobal(lines: string[]): ExtractedAssociate[] {
   const out: ExtractedAssociate[] = [];
-  for (const raw of sectionLines) {
+  const seen = new Set<string>();
+
+  for (const raw of lines) {
     const line = raw.trim();
-    if (!line || line.length > 200) {
+    if (!line || line.length > 220) {
       continue;
     }
-    if (lineLooksLikeSectionHeader(line)) {
-      break;
-    }
-    if (/^(?:NAME|RELATION|RELATIONSHIP|AGE|DOB)\b/i.test(line)) {
+    if (isNoiseLine(line)) {
       continue;
     }
-    const parenRel = line.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
-    if (parenRel) {
-      const name = parenRel[1].trim();
-      const relLabel = parenRel[2].trim();
-      if (
-        isLikelyPersonNameLine(name) &&
-        relLabel.length > 0 &&
-        relLabel.length < 120 &&
-        !/^\d{1,3}$/.test(relLabel)
-      ) {
+
+    let m = line.match(NAME_YEAR_AGE_RE);
+    if (m?.[1]) {
+      const name = cleanAssociateName(m[1]);
+      if (name) {
         const key = name.toUpperCase();
         if (!seen.has(key)) {
           seen.add(key);
@@ -547,100 +545,45 @@ function parseRelativeLinesIntoAssociates(
             id: id(),
             report_id: PLACEHOLDER_REPORT,
             source_id: null,
-            name: name.slice(0, 200),
-            relationship_label: relLabel.slice(0, 120),
+            name,
+            relationship_label: null,
             include_in_report: true,
           });
         }
-        if (out.length >= 40) {
-          break;
-        }
-        continue;
       }
-    }
-    const rel = line.match(/^(.+?)\s*[-–—]\s*(.+)$/);
-    if (rel && isLikelyPersonNameLine(rel[1].trim())) {
-      const name = rel[1].trim().slice(0, 200);
-      const key = name.toUpperCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        out.push({
-          id: id(),
-          report_id: PLACEHOLDER_REPORT,
-          source_id: null,
-          name,
-          relationship_label: rel[2].trim().slice(0, 120),
-          include_in_report: true,
-        });
+      if (out.length >= 40) {
+        break;
       }
       continue;
     }
-    if (isLikelyPersonNameLine(line)) {
-      const name = line.slice(0, 200);
-      const key = name.toUpperCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        out.push({
-          id: id(),
-          report_id: PLACEHOLDER_REPORT,
-          source_id: null,
-          name,
-          relationship_label: null,
-          include_in_report: true,
-        });
+
+    m = line.match(NAME_AGE_ONLY_RE);
+    if (m?.[1]) {
+      const name = cleanAssociateName(m[1]);
+      if (name) {
+        const key = name.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({
+            id: id(),
+            report_id: PLACEHOLDER_REPORT,
+            source_id: null,
+            name,
+            relationship_label: null,
+            include_in_report: true,
+          });
+        }
       }
     }
     if (out.length >= 40) {
       break;
     }
   }
+
   return out;
 }
 
-/**
- * Prefer Possible Relatives inside each Subject … of … block (stays aligned with that subject).
- * Falls back to first document-level Possible Relatives section when no subject blocks.
- */
-function extractPossibleRelatives(text: string): ExtractedAssociate[] {
-  const lines = text.split("\n");
-  const blocks = findSubjectBlockRanges(lines);
-  const seen = new Set<string>();
-  const merged: ExtractedAssociate[] = [];
-
-  if (blocks.length > 0) {
-    for (const { start, end } of blocks) {
-      const chunk = lines.slice(start, end).join("\n");
-      const relChunk = sliceAfterHeader(chunk, RELATIVES_SECTION_HEADER);
-      if (!relChunk) {
-        continue;
-      }
-      const section = takeSectionChunk(relChunk);
-      merged.push(...parseRelativeLinesIntoAssociates(section.split("\n"), seen));
-    }
-    if (merged.length > 0) {
-      return merged;
-    }
-  }
-
-  const chunk = sliceAfterHeader(text, RELATIVES_SECTION_HEADER);
-  if (!chunk) {
-    return extractAssociatesLegacy(text);
-  }
-  const section = takeSectionChunk(chunk);
-  return parseRelativeLinesIntoAssociates(section.split("\n"), seen);
-}
-
-function extractAssociatesLegacy(text: string): ExtractedAssociate[] {
-  const assocHeader =
-    /(?:^|\n)\s*(?:ASSOCIATES?|RELATIVES?|POSSIBLE\s+ASSOCIATES?)\b/i;
-  const assocChunk = sliceAfterHeader(text, assocHeader);
-  if (!assocChunk) {
-    return [];
-  }
-  const section = takeSectionChunk(assocChunk);
-  const seen = new Set<string>();
-  return parseRelativeLinesIntoAssociates(section.split("\n").map((l) => l.trim()), seen);
-}
+// --- Phones (existing: section headers + subject-block fallback) --------------
 
 function phoneConfidenceRank(t: string | null): number {
   if (!t) {
@@ -715,7 +658,6 @@ const PHONE_SECTION_PATTERNS: RegExp[] = [
   /(?:^|\n)\s*Current\s+Phones?\b/gi,
 ];
 
-/** Prefer Possible Phones sections; omit whole-document phone scan. */
 function extractPhones(text: string): ExtractedPhone[] {
   const collected: ExtractedPhone[] = [];
   for (const pattern of PHONE_SECTION_PATTERNS) {
@@ -760,13 +702,14 @@ function extractPhones(text: string): ExtractedPhone[] {
   return dedupePhonesPreferConfidence(collected).slice(0, 80);
 }
 
+// --- Vehicles (strict, unchanged intent) --------------------------------------
+
 const YMM_NOISE_RE =
   /\b(?:report|statement|invoice|fee|total|account|page|section|copyright|annual|balance|payment)\b/i;
 
 const VEHICLE_CONTEXT_RE =
   /\b(?:plate|licen[sc]e|reg\.?|registration|title|vin|vehicle|auto|motor)\b/i;
 
-/** YMM only when the line also hints at vehicle context (reduces false positives). */
 function extractYmmStrictLines(section: string): ExtractedVehicle[] {
   const out: ExtractedVehicle[] = [];
   const lineRe =
@@ -852,7 +795,6 @@ function sliceVehicleSection(text: string): string | null {
   return takeSectionChunk(text.slice(m.index + m[0].length), 12000);
 }
 
-/** Strong signals only: VIN/YMM inside a vehicle section (no whole-document VIN scan). */
 function extractVehicles(text: string): ExtractedVehicle[] {
   const vehSection = sliceVehicleSection(text);
   const out: ExtractedVehicle[] = [];
@@ -875,9 +817,9 @@ function extractVehicles(text: string): ExtractedVehicle[] {
   return deduped.slice(0, 25);
 }
 
-function extractEmployment(section: string): ExtractedEmployment[] {
+function extractEmploymentGlobal(text: string): ExtractedEmployment[] {
   const out: ExtractedEmployment[] = [];
-  for (const line of section.split("\n")) {
+  for (const line of text.split("\n")) {
     const t = line.trim();
     if (t.length < 5 || t.length > 220) {
       continue;
@@ -910,21 +852,19 @@ function extractEmployment(section: string): ExtractedEmployment[] {
 }
 
 /**
- * Best-effort TLO-style parse from plain text (PDF extraction output).
- * Section-aware heuristics tuned for typical TLO comprehensive layouts.
+ * TLO parse: independent global detectors over line stream (no primary reliance on section blocks).
+ * Phones / vehicles reuse section helpers where helpful; addresses also match inline "st, city, ST zip".
  */
 export function parseTlo(rawText: string): ExtractedData {
   const text = normalizeExtractedText(rawText);
-  const people = extractSubjectBlocks(text);
-  const associates = extractPossibleRelatives(text);
-  const addresses = extractAddresses(text);
+  const lines = text.split("\n");
+
+  const people = extractPeopleGlobal(lines);
+  const addresses = extractAddressesGlobal(text, lines);
+  const associates = extractAssociatesGlobal(lines);
   const phones = extractPhones(text);
   const vehicles = extractVehicles(text);
-
-  const empHeader =
-    /(?:^|\n)\s*(?:Employment|Employers?|Work\s+History|Current\s+Employment)\b/i;
-  const empChunk = sliceAfterHeader(text, empHeader);
-  const employment = empChunk ? extractEmployment(takeSectionChunk(empChunk, 6000)) : [];
+  const employment = extractEmploymentGlobal(text);
 
   return {
     people,
