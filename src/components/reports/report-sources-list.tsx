@@ -7,7 +7,7 @@ import { SOURCE_DOCUMENT_TYPE_LABELS } from "@/lib/config/report-templates";
 import { resolveReportSourceFileUrl } from "@/lib/storage/report-files";
 import { countStructuredFields, emptyExtractedData } from "@/lib/reports/fetch-extracted-for-report";
 import type { ReportSource } from "@/types";
-import { FileText, ExternalLink, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, RefreshCw, Trash2 } from "lucide-react";
 
 interface ReportSourcesListProps {
   sources: ReportSource[];
@@ -25,6 +25,49 @@ export function ReportSourcesList({
   const router = useRouter();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rerunningId, setRerunningId] = useState<string | null>(null);
+  const [rerunErrorBySourceId, setRerunErrorBySourceId] = useState<Record<string, string>>(
+    {}
+  );
+  const [rerunSuccessSourceId, setRerunSuccessSourceId] = useState<string | null>(null);
+
+  async function handleRerunExtraction(source: ReportSource) {
+    setRerunErrorBySourceId((prev) => {
+      const next = { ...prev };
+      delete next[source.id];
+      return next;
+    });
+    setRerunningId(source.id);
+    try {
+      const res = await fetch("/api/extraction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId: source.id }),
+      });
+      const json = (await res.json().catch(() => null)) as {
+        error?: string;
+        message?: string;
+      } | null;
+      if (!res.ok) {
+        setRerunErrorBySourceId((prev) => ({
+          ...prev,
+          [source.id]:
+            typeof json?.error === "string" ? json.error : "Re-run extraction failed",
+        }));
+        return;
+      }
+      setRerunSuccessSourceId(source.id);
+      window.setTimeout(() => setRerunSuccessSourceId(null), 3200);
+      router.refresh();
+    } catch {
+      setRerunErrorBySourceId((prev) => ({
+        ...prev,
+        [source.id]: "Network error while re-running extraction.",
+      }));
+    } finally {
+      setRerunningId(null);
+    }
+  }
 
   async function handleDelete(source: ReportSource) {
     if (!reportId) {
@@ -86,8 +129,9 @@ export function ReportSourcesList({
           return (
           <li
             key={s.id}
-            className="flex items-start justify-between gap-3 px-4 py-3"
+            className="px-4 py-3 space-y-2"
           >
+            <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 gap-3">
               <FileText
                 size={18}
@@ -132,7 +176,7 @@ export function ReportSourcesList({
                 </p>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               {s.file_url ? (
                 <a
                   href={resolveReportSourceFileUrl(s.file_url)}
@@ -144,6 +188,31 @@ export function ReportSourcesList({
                   <ExternalLink size={12} />
                 </a>
               ) : null}
+              <button
+                type="button"
+                onClick={() => handleRerunExtraction(s)}
+                disabled={
+                  s.extraction_status === "running" ||
+                  rerunningId === s.id
+                }
+                title="Re-run extraction with latest parser"
+                className="inline-flex items-center gap-1 rounded border border-[#4f7ef5]/35 px-2 py-1 text-xs text-[#7ab3ff] hover:bg-[#4f7ef5]/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw
+                  size={12}
+                  aria-hidden
+                  className={
+                    rerunningId === s.id || s.extraction_status === "running"
+                      ? "animate-spin"
+                      : undefined
+                  }
+                />
+                {s.extraction_status === "running"
+                  ? "Running…"
+                  : rerunningId === s.id
+                    ? "Re-running…"
+                    : "Re-run"}
+              </button>
               {reportId ? (
                 <button
                   type="button"
@@ -157,6 +226,17 @@ export function ReportSourcesList({
                 </button>
               ) : null}
             </div>
+            </div>
+            {rerunErrorBySourceId[s.id] ? (
+              <p className="text-xs text-red-300/90 pl-[34px]" role="alert">
+                {rerunErrorBySourceId[s.id]}
+              </p>
+            ) : null}
+            {rerunSuccessSourceId === s.id ? (
+              <p className="text-xs text-emerald-400/90 pl-[34px]">
+                Extraction finished — refreshing.
+              </p>
+            ) : null}
           </li>
           );
         })}
