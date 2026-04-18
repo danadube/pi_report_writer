@@ -24,6 +24,18 @@ export function emptyExtractedData(): ExtractedData {
   };
 }
 
+/** Total structured rows attached to a source (used for accurate UI copy). */
+export function countStructuredFields(data: ExtractedData): number {
+  return (
+    data.people.length +
+    data.addresses.length +
+    data.phones.length +
+    data.vehicles.length +
+    data.associates.length +
+    data.employment.length
+  );
+}
+
 function ensureBucket(
   map: Map<string, ExtractedData>,
   sourceId: string

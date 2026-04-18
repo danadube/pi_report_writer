@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { formatDate } from "@/lib/utils/reports";
 import { SOURCE_DOCUMENT_TYPE_LABELS } from "@/lib/config/report-templates";
 import { resolveReportSourceFileUrl } from "@/lib/storage/report-files";
+import { countStructuredFields, emptyExtractedData } from "@/lib/reports/fetch-extracted-for-report";
 import type { ReportSource } from "@/types";
 import { FileText, ExternalLink, Trash2 } from "lucide-react";
 
@@ -80,7 +81,9 @@ export function ReportSourcesList({
         </p>
       ) : null}
       <ul className="divide-y divide-[#1e2130] rounded-lg border border-[#2a2f42] bg-[#161922]">
-        {sources.map((s) => (
+        {sources.map((s) => {
+          const structuredCount = countStructuredFields(s.extracted_data ?? emptyExtractedData());
+          return (
           <li
             key={s.id}
             className="flex items-start justify-between gap-3 px-4 py-3"
@@ -112,10 +115,18 @@ export function ReportSourcesList({
                           ? ` (${s.extracted_text.length.toLocaleString()} characters)`
                           : ""}
                       </span>
-                      <span className="block text-[#8b90a0] mt-0.5 text-[11px] leading-snug">
-                        Structured fields saved to this report where detected (people, addresses,
-                        phones, vehicles, associates, employment).
-                      </span>
+                      {structuredCount > 0 ? (
+                        <span className="block text-[#8b90a0] mt-0.5 text-[11px] leading-snug">
+                          Structured fields saved to this report ({structuredCount.toLocaleString()}{" "}
+                          row{structuredCount === 1 ? "" : "s"} across people, addresses, phones,
+                          vehicles, associates, employment).
+                        </span>
+                      ) : (
+                        <span className="block text-amber-400/85 mt-0.5 text-[11px] leading-snug">
+                          No structured fields were detected or saved for this document. Raw text is
+                          still available; check Extraction review below or open the PDF.
+                        </span>
+                      )}
                     </>
                   ) : null}
                 </p>
@@ -147,7 +158,8 @@ export function ReportSourcesList({
               ) : null}
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
       {linkToExtractionReview ? (
         <p className="text-xs text-[#8b90a0] mt-2">

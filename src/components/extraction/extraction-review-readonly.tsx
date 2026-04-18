@@ -56,8 +56,9 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
   if (!hasAny) {
     return (
       <p className="text-sm text-[#8b90a0]">
-        No structured fields were detected for this document. Raw text may still be available
-        above if extraction completed.
+        No structured fields were detected or saved for this document. Raw text extraction may
+        still have succeeded—use Open on the source row to review the PDF, or rely on the character
+        count shown there.
       </p>
     );
   }

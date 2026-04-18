@@ -55,8 +55,9 @@ export function ReportExtractionReview({ sources, reportId }: ReportExtractionRe
           Extraction review
         </h2>
         <p className="text-sm text-[#8b90a0] mt-1">
-          Structured data parsed from each source document. Use the toggles under Phones to exclude
-          noisy numbers; other categories are view-only for now.
+          When the parser recognizes this layout, structured fields appear below by category. If none
+          were saved, you still have raw text from the PDF. Use the toggles under Phones to exclude
+          noisy numbers when phones exist; other categories are view-only for now.
         </p>
       </div>
 

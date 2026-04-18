@@ -24,6 +24,22 @@ const VIN_RE = /\b([A-HJ-NPR-Z0-9]{17})\b/gi;
 /** Line starts with "Subject N of M" (TLO); allow trailing text on same line. */
 const SUBJECT_LINE_RE = /^\s*Subject\s+\d+\s+of\s+\d+\b/i;
 
+/** PDF text often prefixes the same line ("Page 3 … Subject 1 of 2"). */
+function lineHasSubjectMarker(line: string): boolean {
+  const t = line.trim();
+  if (SUBJECT_LINE_RE.test(t)) {
+    return true;
+  }
+  return /\bSubject\s+\d+\s+of\s+\d+\b/i.test(t);
+}
+
+function normalizeExtractedText(raw: string): string {
+  return raw
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\ufeff]/g, "");
+}
+
 /** City, ST  ZIP */
 const CITY_ST_ZIP_RE =
   /^([A-Za-z][A-Za-z\s'.-]+),\s*([A-Z]{2})\s+(\d{5})(?:-(\d{4}))?\s*$/;
@@ -52,11 +68,11 @@ function lineLooksLikeSectionHeader(line: string): boolean {
   if (t.length < 4 || t.length > 90) {
     return false;
   }
-  if (SUBJECT_LINE_RE.test(t)) {
+  if (lineHasSubjectMarker(t)) {
     return true;
   }
   if (
-    /^(?:Address\s+History|Possible\s+Phones|Possible\s+Relatives|Current\s+Other\s+Phones|Vehicle|Vehicles|Registered|Employment|Employers?|Work\s+History|Driver|License|D\s*\/\s*L)\b/i.test(
+    /^(?:Address\s+History|Residential\s+Address|Mailing\s+Address|Current\s+Address|Previous\s+Address|Possible\s+Phones?|Possible\s+Relatives|Known\s+Relatives|Current\s+Other\s+Phones|Vehicle|Vehicles|Registered|Employment|Employers?|Work\s+History|Driver|License|D\s*\/\s*L)\b/i.test(
       t
     )
   ) {
@@ -103,7 +119,7 @@ function isLikelyPersonNameLine(line: string): boolean {
 /** Explicit "Name:" style lines common in TLO subject headers */
 function extractNameFromLabelLine(line: string): string | null {
   const m = line.match(
-    /^(?:Reported\s+)?(?:Primary\s+)?(?:Name|Subject\s+Name)\s*[:#]\s*(.+)$/i
+    /^(?:Reported\s+)?(?:Primary\s+)?(?:Name|Subject\s+Name|Primary\s+Subject|Reported\s+Name)\s*[:#]\s*(.+)$/i
   );
   if (m?.[1]) {
     const n = normalizeName(m[1]);
@@ -124,11 +140,11 @@ function extractDobFromLine(line: string): string | null {
 function findSubjectBlockRanges(lines: string[]): { start: number; end: number }[] {
   const blocks: { start: number; end: number }[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (SUBJECT_LINE_RE.test(lines[i].trim())) {
+    if (lineHasSubjectMarker(lines[i])) {
       const start = i;
       let end = lines.length;
       for (let j = i + 1; j < lines.length; j++) {
-        if (SUBJECT_LINE_RE.test(lines[j].trim())) {
+        if (lineHasSubjectMarker(lines[j])) {
           end = j;
           break;
         }
@@ -317,6 +333,15 @@ function isStreetLine(s: string): boolean {
   );
 }
 
+/** Second line of a two-line street (Apt / Unit / Suite) before city/state line. */
+function isUnitContinuationLine(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 2 || t.length > 80) {
+    return false;
+  }
+  return /^(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FL|FLOOR|RM|ROOM|#)\b/i.test(t);
+}
+
 function parseCityStateZipLine(
   line: string
 ): { city: string; state: string; zip: string } | null {
@@ -375,26 +400,41 @@ function extractAddressesFromLines(
   const out: ExtractedAddress[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < lines.length - 1; i++) {
+  for (let i = 0; i < lines.length - 1; ) {
     const rawStreet = lines[i];
     if (isCurrentOtherPhonesAtAddressLine(rawStreet)) {
+      i++;
       continue;
     }
-    const street = rawStreet.trim();
-    const cityLine = lines[i + 1]?.trim() ?? "";
+    let street = rawStreet.trim();
+    let nextIdx = i + 1;
+    let cityLine = lines[nextIdx]?.trim() ?? "";
+    if (
+      !parseCityStateZipLine(cityLine) &&
+      isUnitContinuationLine(lines[nextIdx] ?? "") &&
+      nextIdx + 1 < lines.length
+    ) {
+      street = `${street} ${lines[nextIdx].trim()}`.trim();
+      nextIdx++;
+      cityLine = lines[nextIdx]?.trim() ?? "";
+    }
     if (isCurrentOtherPhonesAtAddressLine(cityLine)) {
+      i++;
       continue;
     }
     const parsed = parseCityStateZipLine(cityLine);
     if (!parsed) {
+      i++;
       continue;
     }
     if (!isStreetLine(street)) {
+      i++;
       continue;
     }
     const { city, state, zip } = parsed;
     const key = `${street}|${city}|${state}|${zip}`;
     if (seen.has(key) || out.length >= 50) {
+      i++;
       continue;
     }
     seen.add(key);
@@ -421,11 +461,18 @@ function extractAddressesFromLines(
       date_range_text: dateRange,
       include_in_report: true,
     });
-    i++;
+    i = nextIdx + 1;
   }
 
   return out;
 }
+
+const ADDRESS_SECTION_HEADERS: RegExp[] = [
+  /(?:^|\n)\s*(?:Residential\s+)?Address\s+History(?:\s*\([^)]*\))?/im,
+  /(?:^|\n)\s*Residential\s+Address(?:es)?\s+History/im,
+  /(?:^|\n)\s*Mailing\s+Address(?:es)?/im,
+  /(?:^|\n)\s*Current\s+Address(?:es)?(?:\s+Information)?/im,
+];
 
 /** Address History (...) and DL / ID-adjacent blocks; excludes Current Other Phones metadata lines. */
 function extractAddresses(text: string): ExtractedAddress[] {
@@ -443,14 +490,13 @@ function extractAddresses(text: string): ExtractedAddress[] {
     }
   };
 
-  const ahChunk = sliceAfterHeader(
-    text,
-    /(?:^|\n)\s*Address\s+History(?:\s*\([^)]*\))?/im
-  );
-  if (ahChunk) {
-    const section = takeSectionChunk(ahChunk);
-    const lines = section.split("\n").filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
-    pushUnique(extractAddressesFromLines(lines, "Address history"));
+  for (const headerRe of ADDRESS_SECTION_HEADERS) {
+    const ahChunk = sliceAfterHeader(text, headerRe);
+    if (ahChunk) {
+      const section = takeSectionChunk(ahChunk);
+      const lines = section.split("\n").filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
+      pushUnique(extractAddressesFromLines(lines, "Address history"));
+    }
   }
 
   const dlIdx = text.search(
@@ -464,6 +510,9 @@ function extractAddresses(text: string): ExtractedAddress[] {
 
   return all.slice(0, 60);
 }
+
+const RELATIVES_SECTION_HEADER =
+  /(?:^|\n)\s*(?:Possible\s+Relatives|Known\s+Relatives|Possible\s+Associates|Relatives\s+and\s+Associates)\b/i;
 
 function parseRelativeLinesIntoAssociates(
   sectionLines: string[],
@@ -480,6 +529,34 @@ function parseRelativeLinesIntoAssociates(
     }
     if (/^(?:NAME|RELATION|RELATIONSHIP|AGE|DOB)\b/i.test(line)) {
       continue;
+    }
+    const parenRel = line.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+    if (parenRel) {
+      const name = parenRel[1].trim();
+      const relLabel = parenRel[2].trim();
+      if (
+        isLikelyPersonNameLine(name) &&
+        relLabel.length > 0 &&
+        relLabel.length < 120 &&
+        !/^\d{1,3}$/.test(relLabel)
+      ) {
+        const key = name.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({
+            id: id(),
+            report_id: PLACEHOLDER_REPORT,
+            source_id: null,
+            name: name.slice(0, 200),
+            relationship_label: relLabel.slice(0, 120),
+            include_in_report: true,
+          });
+        }
+        if (out.length >= 40) {
+          break;
+        }
+        continue;
+      }
     }
     const rel = line.match(/^(.+?)\s*[-–—]\s*(.+)$/);
     if (rel && isLikelyPersonNameLine(rel[1].trim())) {
@@ -533,7 +610,7 @@ function extractPossibleRelatives(text: string): ExtractedAssociate[] {
   if (blocks.length > 0) {
     for (const { start, end } of blocks) {
       const chunk = lines.slice(start, end).join("\n");
-      const relChunk = sliceAfterHeader(chunk, /(?:^|\n)\s*Possible\s+Relatives\b/i);
+      const relChunk = sliceAfterHeader(chunk, RELATIVES_SECTION_HEADER);
       if (!relChunk) {
         continue;
       }
@@ -545,7 +622,7 @@ function extractPossibleRelatives(text: string): ExtractedAssociate[] {
     }
   }
 
-  const chunk = sliceAfterHeader(text, /(?:^|\n)\s*Possible\s+Relatives\b/i);
+  const chunk = sliceAfterHeader(text, RELATIVES_SECTION_HEADER);
   if (!chunk) {
     return extractAssociatesLegacy(text);
   }
@@ -630,19 +707,29 @@ function dedupePhonesPreferConfidence(phones: ExtractedPhone[]): ExtractedPhone[
   return [...byDigit.values()];
 }
 
+const PHONE_SECTION_PATTERNS: RegExp[] = [
+  /(?:^|\n)\s*Possible\s+Phones?\b/gi,
+  /(?:^|\n)\s*(?:Wireless|Cell|Mobile)\s+Phones?\b/gi,
+  /(?:^|\n)\s*Phone\s+(?:Numbers?|Summary|List)\b/gi,
+  /(?:^|\n)\s*Listed\s+Phones?\b/gi,
+  /(?:^|\n)\s*Current\s+Phones?\b/gi,
+];
+
 /** Prefer Possible Phones sections; omit whole-document phone scan. */
 function extractPhones(text: string): ExtractedPhone[] {
   const collected: ExtractedPhone[] = [];
-  const re = /(?:^|\n)\s*Possible\s+Phones\b/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const after = text.slice(m.index + m[0].length);
-    const chunk = takeSectionChunk(after, 8000);
-    for (const line of chunk.split("\n")) {
-      if (isCurrentOtherPhonesAtAddressLine(line)) {
-        continue;
+  for (const pattern of PHONE_SECTION_PATTERNS) {
+    const re = new RegExp(pattern.source, pattern.flags);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const after = text.slice(m.index + m[0].length);
+      const chunk = takeSectionChunk(after, 8000);
+      for (const line of chunk.split("\n")) {
+        if (isCurrentOtherPhonesAtAddressLine(line)) {
+          continue;
+        }
+        collected.push(...parsePhoneLine(line));
       }
-      collected.push(...parsePhoneLine(line));
     }
   }
 
@@ -827,7 +914,7 @@ function extractEmployment(section: string): ExtractedEmployment[] {
  * Section-aware heuristics tuned for typical TLO comprehensive layouts.
  */
 export function parseTlo(rawText: string): ExtractedData {
-  const text = rawText.replace(/\r\n/g, "\n");
+  const text = normalizeExtractedText(rawText);
   const people = extractSubjectBlocks(text);
   const associates = extractPossibleRelatives(text);
   const addresses = extractAddresses(text);
