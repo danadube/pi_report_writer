@@ -107,7 +107,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
                   {a.street}, {a.city}, {a.state} {a.zip}
                 </span>
                 <InclusionHint included={a.include_in_report} />
-                {a.date_range_text ? (
+                {a.date_from && a.date_to ? (
+                  <p className="text-xs text-[#8b90a0] mt-0.5">
+                    {a.date_from} – {a.date_to}
+                  </p>
+                ) : a.date_range_text ? (
                   <p className="text-xs text-[#8b90a0] mt-0.5">{a.date_range_text}</p>
                 ) : null}
               </li>
@@ -129,8 +133,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
                   {p.phone_number}
                 </span>
                 <InclusionHint included={p.include_in_report} />
-                {p.phone_type ? (
-                  <span className="text-xs text-[#8b90a0]">({p.phone_type})</span>
+                {p.phone_type || p.confidence != null ? (
+                  <span className="text-xs text-[#8b90a0]">
+                    {p.phone_type ? `(${p.phone_type})` : ""}
+                    {p.confidence != null ? `${p.phone_type ? " " : ""}${p.confidence}%` : ""}
+                  </span>
                 ) : null}
               </li>
             ))}

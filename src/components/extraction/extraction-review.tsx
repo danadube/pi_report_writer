@@ -122,7 +122,11 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
             <ReviewRow
               key={addr.id}
               label={`${addr.street}, ${addr.city}, ${addr.state} ${addr.zip}`}
-              sub={addr.date_range_text ?? undefined}
+              sub={
+                addr.date_from && addr.date_to
+                  ? `${addr.date_from} – ${addr.date_to}`
+                  : (addr.date_range_text ?? undefined)
+              }
               included={addr.include_in_report}
               onToggle={() => toggleAddress(addr.id)}
             />
@@ -136,7 +140,11 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
             <ReviewRow
               key={phone.id}
               label={phone.phone_number}
-              sub={phone.phone_type ?? undefined}
+              sub={
+                [phone.phone_type, phone.confidence != null ? `${phone.confidence}%` : null]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
               included={phone.include_in_report}
               onToggle={() => togglePhone(phone.id)}
             />

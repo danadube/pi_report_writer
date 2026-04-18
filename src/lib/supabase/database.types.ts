@@ -158,6 +158,8 @@ export interface Database {
           state: string;
           zip: string;
           date_range_text: string | null;
+          date_from: string | null;
+          date_to: string | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -170,6 +172,8 @@ export interface Database {
           state?: string;
           zip?: string;
           date_range_text?: string | null;
+          date_from?: string | null;
+          date_to?: string | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -182,6 +186,8 @@ export interface Database {
           state?: string;
           zip?: string;
           date_range_text?: string | null;
+          date_from?: string | null;
+          date_to?: string | null;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -193,6 +199,7 @@ export interface Database {
           source_id: string | null;
           phone_number: string;
           phone_type: string | null;
+          confidence: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -201,6 +208,7 @@ export interface Database {
           source_id?: string | null;
           phone_number?: string;
           phone_type?: string | null;
+          confidence?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -209,6 +217,7 @@ export interface Database {
           source_id?: string | null;
           phone_number?: string;
           phone_type?: string | null;
+          confidence?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];

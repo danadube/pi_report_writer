@@ -120,6 +120,8 @@ export async function fetchExtractedGroupedBySource(
       state: row.state,
       zip: row.zip,
       date_range_text: row.date_range_text,
+      date_from: row.date_from,
+      date_to: row.date_to,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, row.source_id).addresses.push(a);
@@ -135,6 +137,7 @@ export async function fetchExtractedGroupedBySource(
       source_id: row.source_id,
       phone_number: row.phone_number,
       phone_type: row.phone_type,
+      confidence: row.confidence,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, row.source_id).phones.push(p);

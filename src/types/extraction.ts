@@ -21,7 +21,12 @@ export interface ExtractedAddress {
   city: string;
   state: string;
   zip: string;
+  /** Raw range string from source when present (e.g. parenthetical). */
   date_range_text: string | null;
+  /** Parsed start date when extractable (e.g. 04/03/2025). */
+  date_from: string | null;
+  /** Parsed end date when extractable. */
+  date_to: string | null;
   include_in_report: boolean;
 }
 
@@ -30,7 +35,10 @@ export interface ExtractedPhone {
   report_id: string;
   source_id: string | null;
   phone_number: string;
+  /** e.g. Mobile, LandLine, VoIP, or legacy "Possible phone (High confidence)". */
   phone_type: string | null;
+  /** Source-reported match confidence 0–100 when present. */
+  confidence: number | null;
   include_in_report: boolean;
 }
 

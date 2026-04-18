@@ -108,8 +108,11 @@ export function ExtractionPhoneRows({ reportId, initialPhones }: ExtractionPhone
                   {p.phone_number}
                 </span>
                 <InclusionHint included={included} />
-                {p.phone_type ? (
-                  <span className="text-xs text-[#8b90a0]">({p.phone_type})</span>
+                {p.phone_type || p.confidence != null ? (
+                  <span className="text-xs text-[#8b90a0]">
+                    {p.phone_type ? `(${p.phone_type})` : ""}
+                    {p.confidence != null ? `${p.phone_type ? " " : ""}${p.confidence}%` : ""}
+                  </span>
                 ) : null}
               </div>
             </li>

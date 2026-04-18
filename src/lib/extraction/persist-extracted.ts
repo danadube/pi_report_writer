@@ -100,6 +100,8 @@ export async function replaceExtractedDataForSource(
       state: clip(a.state, 32) ?? "",
       zip: clip(a.zip, 32) ?? "",
       date_range_text: clip(a.date_range_text, MAX_TEXT_FIELD),
+      date_from: clip(a.date_from, 32),
+      date_to: clip(a.date_to, 32),
       include_in_report: a.include_in_report,
     }));
     const { error } = await supabase.from("extracted_addresses").insert(rows);
@@ -115,6 +117,10 @@ export async function replaceExtractedDataForSource(
       source_id: sourceId,
       phone_number: clip(p.phone_number, 120) ?? "",
       phone_type: clip(p.phone_type, 120),
+      confidence:
+        p.confidence != null && p.confidence >= 0 && p.confidence <= 100
+          ? Math.round(p.confidence)
+          : null,
       include_in_report: p.include_in_report,
     }));
     const { error } = await supabase.from("extracted_phones").insert(rows);

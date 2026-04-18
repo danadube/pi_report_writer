@@ -504,6 +504,8 @@ function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
 
 // --- Addresses: single-line "street, city, ST ZIP" anywhere + two-line pairs ----
 
+const MAX_ADDRESS_STREET_CHARS = 120;
+
 /** Strip TLO metadata that sometimes prefixes or embeds in address fragments. */
 const ADDRESS_JUNK_PREFIX_RE =
   /^(?:(?:Subdivision\s+Name|Address\s+contains|Address\s*:|(?:\d{4}\s*)?ID\s+Type|DL\s*#?|Reported\s+Address|Location)\s*:\s*)/i;
@@ -518,6 +520,115 @@ function cleanAddressField(s: string): string {
   return t;
 }
 
+/** Drop label / boilerplate lines (not physical addresses). Avoids flagging "430 Report Ave". */
+function isAddressMetadataLine(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 4) {
+    return false;
+  }
+  const looksLikeStreetStart =
+    /^\d{1,6}\s/.test(t) || /^(?:P\.?O\.?\s*BOX|PO\s*BOX)\b/i.test(t);
+  if (looksLikeStreetStart) {
+    return false;
+  }
+  return (
+    /Subdivision\s+Name/i.test(t) ||
+    /Address\s+contains/i.test(t) ||
+    /\bPrepared\s+by\b/i.test(t) ||
+    /\bReport\b/i.test(t) ||
+    /\bPage\b/i.test(t)
+  );
+}
+
+/** First place that looks like "123 MAIN…" — drops "DL … NAME …" before the number. */
+function stripStreetToLeadingNumber(s: string): string {
+  const t = normalizeName(s);
+  const m = t.match(/\d{1,6}\s+[A-Za-z0-9#]/);
+  if (m && m.index !== undefined && m.index > 0) {
+    return t.slice(m.index).trim();
+  }
+  return t;
+}
+
+function trimStreetToMaxLength(street: string): string {
+  if (street.length <= MAX_ADDRESS_STREET_CHARS) {
+    return street;
+  }
+  const slice = street.slice(0, MAX_ADDRESS_STREET_CHARS);
+  const lastComma = slice.lastIndexOf(",");
+  if (lastComma > 24) {
+    return slice.slice(0, lastComma).trim();
+  }
+  const lastSpace = slice.lastIndexOf(" ");
+  if (lastSpace > 24) {
+    return slice.slice(0, lastSpace).trim();
+  }
+  return slice.trim();
+}
+
+/**
+ * Street-only: strip label junk, then snap to the first "123 MAIN…" segment (drops "DL NAME …" before the number).
+ */
+function cleanAddressStreet(raw: string): string {
+  let t = normalizeName(raw);
+  let prev = "";
+  while (t !== prev && t.length > 0) {
+    prev = t;
+    t = t.replace(ADDRESS_JUNK_PREFIX_RE, "").trim();
+  }
+  t = stripStreetToLeadingNumber(t);
+  if (isAddressMetadataLine(t)) {
+    return "";
+  }
+  t = trimStreetToMaxLength(t);
+  return t;
+}
+
+function isStreetStartsWithNumberOrPoBox(street: string): boolean {
+  const t = street.trim();
+  if (t.length < 4) {
+    return false;
+  }
+  if (/^(?:P\.?O\.?\s*BOX|PO\s*BOX)\b/i.test(t)) {
+    return true;
+  }
+  return /^\d{1,6}\s/.test(t);
+}
+
+/** e.g. (04/03/2025 to 03/12/2026) on same line as address */
+const ADDRESS_LINE_DATE_RANGE_PAREN_RE =
+  /\((\d{1,2}\/\d{1,2}\/\d{4})\s+to\s+(\d{1,2}\/\d{1,2}\/\d{4})\)/i;
+
+function parseAddressLineDateRange(fullLine: string): {
+  date_from: string | null;
+  date_to: string | null;
+  date_range_text: string | null;
+} {
+  const t = fullLine.trim();
+  if (!t) {
+    return { date_from: null, date_to: null, date_range_text: null };
+  }
+  let m = t.match(ADDRESS_LINE_DATE_RANGE_PAREN_RE);
+  if (m?.[1] && m[2]) {
+    return {
+      date_from: m[1],
+      date_to: m[2],
+      date_range_text: `${m[1]} to ${m[2]}`,
+    };
+  }
+  m = t.match(
+    /(\d{1,2}\/\d{1,2}\/\d{4})\s+to\s+(\d{1,2}\/\d{1,2}\/\d{4})/i
+  );
+  if (m?.[1] && m[2]) {
+    return {
+      date_from: m[1],
+      date_to: m[2],
+      date_range_text: `${m[1]} to ${m[2]}`,
+    };
+  }
+  return { date_from: null, date_to: null, date_range_text: null };
+}
+
 /** Embedded or standalone: number + street fragment, city, state zip */
 const SINGLE_LINE_ADDR_RE =
   /\b(\d{1,6}\s+[A-Za-z0-9#][^,\n]{1,85}?),\s*([A-Za-z][A-Za-z\s'.-]{1,45}),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/g;
@@ -528,24 +639,31 @@ function extractAddressesSingleLine(text: string): ExtractedAddress[] {
   let m: RegExpExecArray | null;
   const re = new RegExp(SINGLE_LINE_ADDR_RE.source, "g");
   while ((m = re.exec(text)) !== null) {
-    const street = cleanAddressField(m[1]);
-    const city = cleanAddressField(m[2]);
-    const state = m[3];
-    const zip = m[4];
-    if (street.length < 4 || city.length < 2) {
+    const street = cleanAddressStreet(m[1]);
+    if (!street || !isStreetStartsWithNumberOrPoBox(street)) {
       continue;
     }
+    const city = cleanAddressField(m[2]);
+    if (!city || city.length < 2 || isAddressMetadataLine(city)) {
+      continue;
+    }
+    const state = m[3];
+    const zip = m[4];
     if (/\bAge\s*:/i.test(street)) {
       continue;
     }
     if (/^\d{1,2}\s+Flat\b/i.test(street)) {
       continue;
     }
-    const key = `${street}|${city}|${state}|${zip}`;
+    const key = `${street}|${city}|${state}|${zip}`.replace(/\s+/g, " ").toUpperCase();
     if (seen.has(key) || out.length >= 50) {
       continue;
     }
     seen.add(key);
+    const lineStart = text.lastIndexOf("\n", m.index) + 1;
+    const lineEnd = text.indexOf("\n", m.index);
+    const fullLine = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+    const dr = parseAddressLineDateRange(fullLine);
     out.push({
       id: id(),
       report_id: PLACEHOLDER_REPORT,
@@ -555,7 +673,9 @@ function extractAddressesSingleLine(text: string): ExtractedAddress[] {
       city,
       state,
       zip,
-      date_range_text: null,
+      date_range_text: dr.date_range_text,
+      date_from: dr.date_from,
+      date_to: dr.date_to,
       include_in_report: true,
     });
   }
@@ -575,7 +695,12 @@ function extractAddressesFromLines(
       i++;
       continue;
     }
-    let street = rawStreet.trim();
+    const rawTrim = rawStreet.trim();
+    if (isAddressMetadataLine(rawTrim)) {
+      i++;
+      continue;
+    }
+    let street = rawTrim;
     let nextIdx = i + 1;
     let cityLine = lines[nextIdx]?.trim() ?? "";
     if (
@@ -583,7 +708,7 @@ function extractAddressesFromLines(
       isUnitContinuationLine(lines[nextIdx] ?? "") &&
       nextIdx + 1 < lines.length
     ) {
-      street = cleanAddressField(`${street} ${lines[nextIdx].trim()}`.trim());
+      street = `${street} ${lines[nextIdx].trim()}`.trim();
       nextIdx++;
       cityLine = lines[nextIdx]?.trim() ?? "";
     }
@@ -591,19 +716,27 @@ function extractAddressesFromLines(
       i++;
       continue;
     }
-    street = cleanAddressField(street);
+    if (isAddressMetadataLine(cityLine)) {
+      i++;
+      continue;
+    }
+    street = cleanAddressStreet(street);
+    if (!street || !isStreetStartsWithNumberOrPoBox(street)) {
+      i++;
+      continue;
+    }
     const parsed = parseCityStateZipLine(cityLine);
     if (!parsed) {
       i++;
       continue;
     }
-    if (!isStreetLine(street)) {
+    const city = cleanAddressField(parsed.city);
+    if (!city || isAddressMetadataLine(city)) {
       i++;
       continue;
     }
-    const city = cleanAddressField(parsed.city);
     const { state, zip } = parsed;
-    const key = `${street}|${city}|${state}|${zip}`;
+    const key = `${street}|${city}|${state}|${zip}`.replace(/\s+/g, " ").toUpperCase();
     if (seen.has(key) || out.length >= 50) {
       i++;
       continue;
@@ -611,13 +744,24 @@ function extractAddressesFromLines(
     seen.add(key);
 
     let label = defaultLabel;
-    let dateRange: string | null = null;
     const prev = lines[i - 1]?.trim() ?? "";
-    if (prev && DATE_RANGE_HINT_RE.test(prev) && !isStreetLine(prev)) {
-      dateRange = prev.slice(0, 200);
-    }
     if (prev && /^(?:Mailing|Physical|Current|Previous|Former)\b/i.test(prev)) {
       label = prev.slice(0, 120);
+    }
+
+    const drLine = parseAddressLineDateRange(`${street} ${cityLine}`);
+    let date_from = drLine.date_from;
+    let date_to = drLine.date_to;
+    let date_range_text = drLine.date_range_text;
+    if (!date_from && prev) {
+      const drPrev = parseAddressLineDateRange(prev);
+      if (drPrev.date_from) {
+        date_from = drPrev.date_from;
+        date_to = drPrev.date_to;
+        date_range_text = drPrev.date_range_text ?? prev.slice(0, 200);
+      } else if (DATE_RANGE_HINT_RE.test(prev) && !isStreetLine(prev)) {
+        date_range_text = prev.slice(0, 200);
+      }
     }
 
     out.push({
@@ -629,7 +773,9 @@ function extractAddressesFromLines(
       city,
       state,
       zip,
-      date_range_text: dateRange,
+      date_range_text,
+      date_from,
+      date_to,
       include_in_report: true,
     });
     i = nextIdx + 1;
@@ -642,7 +788,9 @@ function dedupeAddresses(rows: ExtractedAddress[]): ExtractedAddress[] {
   const seen = new Set<string>();
   const out: ExtractedAddress[] = [];
   for (const a of rows) {
-    const k = `${a.street}|${a.city}|${a.state}|${a.zip}`.toUpperCase();
+    const k = `${a.street}|${a.city}|${a.state}|${a.zip}`
+      .replace(/\s+/g, " ")
+      .toUpperCase();
     if (seen.has(k) || out.length >= 60) {
       continue;
     }
@@ -654,7 +802,9 @@ function dedupeAddresses(rows: ExtractedAddress[]): ExtractedAddress[] {
 
 function extractAddressesGlobal(text: string, lines: string[]): ExtractedAddress[] {
   const single = extractAddressesSingleLine(text);
-  const filtered = lines.filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
+  const filtered = lines.filter(
+    (l) => !isCurrentOtherPhonesAtAddressLine(l) && !isAddressMetadataLine(l)
+  );
   const twoLine = extractAddressesFromLines(filtered, null);
   return dedupeAddresses([...single, ...twoLine]);
 }
@@ -792,30 +942,75 @@ function phoneConfidenceRank(t: string | null): number {
   return 0;
 }
 
+/** Prefer rows with numeric confidence and TLO line type (Mobile / LandLine / VoIP). */
+function phoneRowRank(p: ExtractedPhone): number {
+  let score = 0;
+  if (p.confidence != null && p.confidence >= 0 && p.confidence <= 100) {
+    score += p.confidence;
+  }
+  score += phoneConfidenceRank(p.phone_type) * 25;
+  if (/\b(Mobile|LandLine|VoIP)\b/i.test(p.phone_type ?? "")) {
+    score += 20;
+  }
+  return score;
+}
+
+function parseTloPhoneLineSegments(afterPhone: string): {
+  lineKind: string | null;
+  confidence: number | null;
+} {
+  const segment = afterPhone.slice(0, 240);
+  const typeM = segment.match(/\((Mobile|LandLine|VoIP)\)/i);
+  const pctM = segment.match(/\((\d{1,3})%\)/);
+  let confidence: number | null = null;
+  if (pctM?.[1]) {
+    const n = parseInt(pctM[1], 10);
+    if (!Number.isNaN(n)) {
+      confidence = Math.min(100, Math.max(0, n));
+    }
+  }
+  return {
+    lineKind: typeM?.[1] ?? null,
+    confidence,
+  };
+}
+
 function parsePhoneLine(line: string): ExtractedPhone[] {
   if (isCurrentOtherPhonesAtAddressLine(line)) {
     return [];
   }
-  const matches = line.match(PHONE_RE) ?? [];
   const out: ExtractedPhone[] = [];
-  const conf =
+  const legacyConf =
     line.match(/\((High|Medium|Low)\)|\b(High|Medium|Low)\s+confidence\b/i)?.[1] ??
     line.match(/\b(High|Medium|Low)\b/i)?.[1];
-  const typeLabel = conf
-    ? `Possible phone (${conf} confidence)`
-    : "Possible phone";
 
-  for (const raw of matches) {
+  const re = new RegExp(PHONE_RE.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    const raw = m[0];
     const key = normalizePhoneDigits(raw);
     if (key.length !== 10) {
       continue;
     }
+    const after = line.slice(m.index + raw.length);
+    const nextIdx = after.search(/\(\d{3}\)/);
+    const segment = nextIdx >= 0 ? after.slice(0, nextIdx) : after;
+    const { lineKind, confidence } = parseTloPhoneLineSegments(segment);
+
+    let phoneType: string | null = lineKind;
+    if (!phoneType) {
+      phoneType = legacyConf
+        ? `Possible phone (${legacyConf} confidence)`
+        : "Possible phone";
+    }
+
     out.push({
       id: id(),
       report_id: PLACEHOLDER_REPORT,
       source_id: null,
       phone_number: raw.trim(),
-      phone_type: typeLabel,
+      phone_type: phoneType,
+      confidence,
       include_in_report: true,
     });
   }
@@ -830,10 +1025,7 @@ function dedupePhonesPreferConfidence(phones: ExtractedPhone[]): ExtractedPhone[
       continue;
     }
     const existing = byDigit.get(k);
-    if (
-      !existing ||
-      phoneConfidenceRank(p.phone_type) > phoneConfidenceRank(existing.phone_type)
-    ) {
+    if (!existing || phoneRowRank(p) > phoneRowRank(existing)) {
       byDigit.set(k, p);
     }
   }
@@ -869,12 +1061,15 @@ function extractPhonesGlobalParenFormat(text: string): ExtractedPhone[] {
       continue;
     }
     seenDigits.add(key);
+    const after = text.slice(idx + raw.length, idx + raw.length + 240);
+    const { lineKind, confidence } = parseTloPhoneLineSegments(after);
     out.push({
       id: id(),
       report_id: PLACEHOLDER_REPORT,
       source_id: null,
       phone_number: raw.trim(),
-      phone_type: "Possible phone",
+      phone_type: lineKind ?? "Possible phone",
+      confidence,
       include_in_report: true,
     });
     if (out.length >= 80) {
