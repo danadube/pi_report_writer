@@ -3,6 +3,7 @@ import { formatDate, getReportTypeLabel, getStatusLabel } from "@/lib/utils/repo
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Pencil, Printer } from "lucide-react";
+import { ReportExtractionReview } from "@/components/reports/report-extraction-review";
 import { ReportSourcesList } from "@/components/reports/report-sources-list";
 import type { Report } from "@/types";
 
@@ -98,8 +99,14 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
         <p className="text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
           Source documents
         </p>
-        <ReportSourcesList sources={sources} />
+        <ReportSourcesList
+          sources={sources}
+          reportId={report.id}
+          linkToExtractionReview
+        />
       </div>
+
+      <ReportExtractionReview sources={sources} reportId={report.id} />
     </div>
   );
 }

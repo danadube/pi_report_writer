@@ -4,7 +4,15 @@ export interface ExtractedPerson {
   source_id: string | null;
   full_name: string;
   dob: string | null;
+  /** SSN as extracted from source (e.g. 326-71-0673). */
+  ssn: string | null;
+  drivers_license_number: string | null;
+  drivers_license_state: string | null;
   aliases: string[];
+  /** TLO subject slot when known (Subject 1 of 2 → 1). */
+  subject_index: number | null;
+  /** Investigation primary subject (typically TLO Subject 1). */
+  is_primary_subject: boolean;
   include_in_report: boolean;
 }
 
@@ -17,7 +25,14 @@ export interface ExtractedAddress {
   city: string;
   state: string;
   zip: string;
+  /** Raw range string from source when present (e.g. parenthetical). */
   date_range_text: string | null;
+  /** Parsed start date when extractable (e.g. 04/03/2025). */
+  date_from: string | null;
+  /** Parsed end date when extractable. */
+  date_to: string | null;
+  /** TLO subject slot when known; null = unscoped / legacy. */
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -26,7 +41,22 @@ export interface ExtractedPhone {
   report_id: string;
   source_id: string | null;
   phone_number: string;
+  /** e.g. Mobile, LandLine, VoIP, or legacy "Possible phone (High confidence)". */
   phone_type: string | null;
+  /** Source-reported match confidence 0–100 when present. */
+  confidence: number | null;
+  subject_index: number | null;
+  include_in_report: boolean;
+}
+
+export interface ExtractedEmail {
+  id: string;
+  report_id: string;
+  source_id: string | null;
+  email: string;
+  /** Source-reported match confidence 0–100 when present. */
+  confidence: number | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -40,6 +70,7 @@ export interface ExtractedVehicle {
   vin: string | null;
   plate: string | null;
   state: string | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -49,6 +80,7 @@ export interface ExtractedAssociate {
   source_id: string | null;
   name: string;
   relationship_label: string | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -58,6 +90,7 @@ export interface ExtractedEmployment {
   source_id: string | null;
   employer_name: string;
   role_title: string | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -65,6 +98,7 @@ export interface ExtractedData {
   people: ExtractedPerson[];
   addresses: ExtractedAddress[];
   phones: ExtractedPhone[];
+  emails: ExtractedEmail[];
   vehicles: ExtractedVehicle[];
   associates: ExtractedAssociate[];
   employment: ExtractedEmployment[];

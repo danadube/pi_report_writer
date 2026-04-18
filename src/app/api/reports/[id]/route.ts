@@ -9,6 +9,10 @@ import {
   type Report,
   type ReportSource,
 } from "@/types";
+import {
+  fetchExtractedGroupedBySource,
+  mergeSourcesWithExtracted,
+} from "@/lib/reports/fetch-extracted-for-report";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -60,6 +64,48 @@ async function fetchSourcesForReport(
   };
 }
 
+const API_DEBUG = "[report-api-debug]";
+
+async function attachExtractedRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  reportId: string,
+  sources: ReportSource[]
+): Promise<{ ok: true; sources: ReportSource[] } | { ok: false; message: string }> {
+  console.error(API_DEBUG, "attachExtractedRows: start", {
+    reportId,
+    sourceIds: sources.map((s) => s.id),
+  });
+  try {
+    const extracted = await fetchExtractedGroupedBySource(supabase, reportId);
+    if (!extracted.ok) {
+      console.error(API_DEBUG, "attachExtractedRows: fetchExtractedGroupedBySource failed", {
+        reportId,
+        message: extracted.message,
+      });
+      return extracted;
+    }
+    console.error(API_DEBUG, "attachExtractedRows: before mergeSourcesWithExtracted", {
+      reportId,
+      sourceIds: sources.map((s) => s.id),
+    });
+    const merged = mergeSourcesWithExtracted(sources, extracted.bySource, reportId);
+    console.error(API_DEBUG, "attachExtractedRows: ok", { reportId, mergedCount: merged.length });
+    return {
+      ok: true,
+      sources: merged,
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error(API_DEBUG, "attachExtractedRows: threw", {
+      reportId,
+      message,
+      stack,
+    });
+    return { ok: false, message };
+  }
+}
+
 /**
  * GET /api/reports/[id] — single report with related sources.
  * PATCH /api/reports/[id] — update report fields (owner only via RLS).
@@ -67,56 +113,102 @@ async function fetchSourcesForReport(
  * TODO: DELETE — soft-delete (status ARCHIVED) or hard delete per product rules.
  */
 export async function GET(_request: Request, { params }: RouteParams) {
-  const { id } = await params;
-  const supabase = await createClient();
+  let reportIdForLog = "";
+  try {
+    const { id } = await params;
+    reportIdForLog = id;
+    console.error(API_DEBUG, "GET /api/reports/[id]: start", { reportId: id });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const supabase = await createClient();
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    console.error(API_DEBUG, "before reports.select", { reportId: id });
+    const { data: row, error } = await supabase
+      .from("reports")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      console.error(API_DEBUG, "reports.select failed", {
+        reportId: id,
+        message: error.message,
+        code: (error as { code?: string }).code,
+      });
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    console.error(API_DEBUG, "after reports.select", { reportId: id, found: !!row });
+
+    if (!row) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    console.error(API_DEBUG, "before report_sources (fetchSourcesForReport)", { reportId: row.id });
+    const sourcesResult = await fetchSourcesForReport(supabase, row.id);
+    if (!sourcesResult.ok) {
+      console.error(API_DEBUG, "fetchSourcesForReport failed", {
+        reportId: row.id,
+        message: sourcesResult.message,
+      });
+      return NextResponse.json({ error: sourcesResult.message }, { status: 500 });
+    }
+    console.error(API_DEBUG, "after fetchSourcesForReport", {
+      reportId: row.id,
+      sourceIds: sourcesResult.sources.map((s) => s.id),
+      count: sourcesResult.sources.length,
+    });
+
+    const withExtracted = await attachExtractedRows(supabase, row.id, sourcesResult.sources);
+    if (!withExtracted.ok) {
+      console.error(API_DEBUG, "attachExtractedRows returned error", {
+        reportId: row.id,
+        message: withExtracted.message,
+      });
+      return NextResponse.json({ error: withExtracted.message }, { status: 500 });
+    }
+    const sources = withExtracted.sources;
+
+    const report: Report = {
+      id: row.id,
+      organization_id: row.organization_id,
+      created_by_user_id: row.created_by_user_id,
+      report_type: row.report_type as ReportType,
+      status: row.status as ReportStatus,
+      case_name: row.case_name,
+      client_name: row.client_name,
+      investigator_name: row.investigator_name,
+      subject_name: row.subject_name,
+      report_date: row.report_date,
+      summary_notes: row.summary_notes,
+      generated_report_html: row.generated_report_html,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      sources,
+    };
+
+    console.error(API_DEBUG, "GET /api/reports/[id]: success", { reportId: row.id });
+    return NextResponse.json(report);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error(API_DEBUG, "GET /api/reports/[id]: unhandled throw", {
+      reportId: reportIdForLog,
+      message,
+      stack,
+    });
+    return NextResponse.json(
+      { error: message || "Internal server error" },
+      { status: 500 }
+    );
   }
-
-  const { data: row, error } = await supabase
-    .from("reports")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  if (!row) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const sourcesResult = await fetchSourcesForReport(supabase, row.id);
-  if (!sourcesResult.ok) {
-    return NextResponse.json({ error: sourcesResult.message }, { status: 500 });
-  }
-  const sources = sourcesResult.sources;
-
-  const report: Report = {
-    id: row.id,
-    organization_id: row.organization_id,
-    created_by_user_id: row.created_by_user_id,
-    report_type: row.report_type as ReportType,
-    status: row.status as ReportStatus,
-    case_name: row.case_name,
-    client_name: row.client_name,
-    investigator_name: row.investigator_name,
-    subject_name: row.subject_name,
-    report_date: row.report_date,
-    summary_notes: row.summary_notes,
-    generated_report_html: row.generated_report_html,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    sources,
-  };
-
-  return NextResponse.json(report);
 }
 
 export async function PATCH(request: Request, { params }: RouteParams) {
@@ -183,7 +275,15 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (!sourcesResult.ok) {
     return NextResponse.json({ error: sourcesResult.message }, { status: 500 });
   }
-  const sources = sourcesResult.sources;
+  const withExtracted = await attachExtractedRows(
+    supabase,
+    updatedRow.id,
+    sourcesResult.sources
+  );
+  if (!withExtracted.ok) {
+    return NextResponse.json({ error: withExtracted.message }, { status: 500 });
+  }
+  const sources = withExtracted.sources;
 
   const report: Report = {
     id: updatedRow.id,

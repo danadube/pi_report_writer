@@ -63,9 +63,20 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
     });
   }
 
+  function toggleEmail(id: string) {
+    onChange({
+      ...data,
+      emails: data.emails.map((e) =>
+        e.id === id ? { ...e, include_in_report: !e.include_in_report } : e
+      ),
+    });
+  }
+
   const isEmpty =
+    data.people.length === 0 &&
     data.addresses.length === 0 &&
     data.phones.length === 0 &&
+    data.emails.length === 0 &&
     data.vehicles.length === 0 &&
     data.associates.length === 0 &&
     data.employment.length === 0;
@@ -89,7 +100,22 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
             <ReviewRow
               key={person.id}
               label={person.full_name}
-              sub={[person.dob ? `DOB: ${person.dob}` : null, person.aliases.length > 0 ? `AKA: ${person.aliases.join(", ")}` : null].filter(Boolean).join(" · ")}
+              sub={[
+                person.subject_index != null
+                  ? person.is_primary_subject
+                    ? "Primary subject"
+                    : `Subject ${person.subject_index}`
+                  : null,
+                person.dob ? `DOB: ${person.dob}` : null,
+                person.ssn ? `SSN: ${person.ssn}` : null,
+                person.drivers_license_number
+                  ? `DL#: ${person.drivers_license_number}`
+                  : null,
+                person.drivers_license_state ? `DL state: ${person.drivers_license_state}` : null,
+                person.aliases.length > 0 ? `AKA: ${person.aliases.join(", ")}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
               included={person.include_in_report}
               onToggle={() => {
                 onChange({
@@ -112,7 +138,11 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
             <ReviewRow
               key={addr.id}
               label={`${addr.street}, ${addr.city}, ${addr.state} ${addr.zip}`}
-              sub={addr.date_range_text ?? undefined}
+              sub={
+                addr.date_from && addr.date_to
+                  ? `${addr.date_from} – ${addr.date_to}`
+                  : (addr.date_range_text ?? undefined)
+              }
               included={addr.include_in_report}
               onToggle={() => toggleAddress(addr.id)}
             />
@@ -126,9 +156,27 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
             <ReviewRow
               key={phone.id}
               label={phone.phone_number}
-              sub={phone.phone_type ?? undefined}
+              sub={
+                [phone.phone_type, phone.confidence != null ? `${phone.confidence}%` : null]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
               included={phone.include_in_report}
               onToggle={() => togglePhone(phone.id)}
+            />
+          ))}
+        </ReviewSection>
+      )}
+
+      {data.emails.length > 0 && (
+        <ReviewSection title="Emails">
+          {data.emails.map((em) => (
+            <ReviewRow
+              key={em.id}
+              label={em.email}
+              sub={em.confidence != null ? `${em.confidence}%` : undefined}
+              included={em.include_in_report}
+              onToggle={() => toggleEmail(em.id)}
             />
           ))}
         </ReviewSection>

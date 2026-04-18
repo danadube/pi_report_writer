@@ -82,6 +82,28 @@ export function storageObjectPathFromPublicUrl(
 }
 
 /**
+ * Validates a storage object key for downloads (trim, no path traversal, no control chars).
+ * Returns normalized key without leading slashes.
+ */
+export function normalizeStorageObjectPath(path: string): string | null {
+  const t = path.trim();
+  if (!t) {
+    return null;
+  }
+  const norm = t.replace(/^\/+/, "");
+  if (!norm) {
+    return null;
+  }
+  if (norm.split("/").some((seg) => seg === "..")) {
+    return null;
+  }
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(norm)) {
+    return null;
+  }
+  return norm;
+}
+
+/**
  * NEXT_PUBLIC_SUPABASE_URL must be the Supabase API origin (e.g. https://xxxx.supabase.co),
  * not the Vercel app URL. Otherwise getPublicUrl() produces links under your deployment
  * host and clicks return 404 from the Next app.

@@ -6,9 +6,43 @@ import {
   buildStoragePublicObjectUrl,
   validateSupabaseUrlForStorage,
 } from "@/lib/storage/report-files";
+import {
+  fetchExtractedGroupedBySource,
+  mergeSourcesWithExtracted,
+} from "@/lib/reports/fetch-extracted-for-report";
 import { NextResponse } from "next/server";
-import { runExtractionForSource } from "@/lib/extraction/extraction-pipeline";
 import { SourceDocumentType, type ReportSource } from "@/types";
+
+const UPLOAD_EXTRACTION_ERROR_MAX_LEN = 5000;
+
+async function persistExtractionFailureFromUpload(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  sourceId: string,
+  reportId: string,
+  err: unknown
+): Promise<void> {
+  const raw =
+    err instanceof Error ? err.message : "Extraction failed (unexpected error)";
+  const trimmed =
+    raw.length > UPLOAD_EXTRACTION_ERROR_MAX_LEN
+      ? `${raw.slice(0, UPLOAD_EXTRACTION_ERROR_MAX_LEN)}…`
+      : raw;
+  const { error } = await supabase
+    .from("report_sources")
+    .update({
+      extraction_status: "failed",
+      extraction_error: trimmed,
+    })
+    .eq("id", sourceId)
+    .eq("report_id", reportId);
+
+  if (error) {
+    console.error(
+      "[uploads] failed to persist extraction_error after extraction failure:",
+      error.message
+    );
+  }
+}
 
 /**
  * POST /api/uploads
@@ -112,6 +146,9 @@ export async function POST(request: Request) {
   }
 
   try {
+    const { runExtractionForSource } = await import(
+      "@/lib/extraction/extraction-pipeline"
+    );
     const ex = await runExtractionForSource(supabase, {
       sourceId: sourceRow.id,
       reportId,
@@ -122,6 +159,7 @@ export async function POST(request: Request) {
     }
   } catch (e) {
     console.error("[uploads] extraction threw:", e);
+    await persistExtractionFailureFromUpload(supabase, sourceRow.id, reportId, e);
   }
 
   const {
@@ -149,7 +187,7 @@ export async function POST(request: Request) {
 
   const row = reloadFailed ? sourceRow : sourceAfterExtraction;
 
-  const source: ReportSource = {
+  let source: ReportSource = {
     id: row.id,
     report_id: row.report_id,
     source_type: row.source_type as ReportSource["source_type"],
@@ -160,6 +198,18 @@ export async function POST(request: Request) {
     extraction_error: row.extraction_error,
     created_at: row.created_at,
   };
+
+  const extractedBundle = await fetchExtractedGroupedBySource(supabase, reportId);
+  if (extractedBundle.ok) {
+    const [merged] = mergeSourcesWithExtracted(
+      [source],
+      extractedBundle.bySource,
+      reportId
+    );
+    if (merged) {
+      source = merged;
+    }
+  }
 
   return NextResponse.json(
     {
