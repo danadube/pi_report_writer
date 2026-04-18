@@ -312,9 +312,12 @@ function dedupePeople(rows: ExtractedPerson[]): ExtractedPerson[] {
   return [...byKey.values()].slice(0, 32);
 }
 
-/** Strong anchor: "Subject 1 of 2: MIGUEL ANGEL TRINIDAD" (common in TLO PDF text). */
+/**
+ * Full line after colon — not limited to 4 ALL-CAPS tokens (long / compound names).
+ * Stops at "(" so trailing (dates) on the same line is not part of the name.
+ */
 const SUBJECT_COLON_NAME_RE =
-  /Subject\s+\d+\s+of\s+\d+:\s*([A-Z][A-Z\s\-']*)/gi;
+  /Subject\s+\d+\s+of\s+\d+\s*:\s*([^\n(]+)/gi;
 
 function isRejectedPersonName(name: string): boolean {
   const t = name.trim();
@@ -325,7 +328,19 @@ function isRejectedPersonName(name: string): boolean {
     return true;
   }
   const words = t.split(/\s+/).filter(Boolean);
-  return words.length > 4;
+  return words.length > 8;
+}
+
+/** Strip report junk that sometimes follows the name on the same line. */
+function cleanLooseSubjectName(raw: string): string {
+  let t = normalizeName(raw);
+  t = t.replace(/\s+(?:Page|Report)\s+\d+.*$/i, "").trim();
+  t = t.replace(
+    /\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s*[-–—]\s*\d{1,2}\/\d{1,2}\/\d{2,4}.*$/i,
+    ""
+  ).trim();
+  t = t.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  return t.slice(0, 120);
 }
 
 function extractPeopleFromSubjectColonPattern(text: string): ExtractedPerson[] {
@@ -334,7 +349,7 @@ function extractPeopleFromSubjectColonPattern(text: string): ExtractedPerson[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const raw = m[1]?.trim() ?? "";
-    const name = normalizeName(raw.replace(/\s+/g, " "));
+    const name = cleanLooseSubjectName(raw.replace(/\s+/g, " "));
     if (!name || isRejectedPersonName(name)) {
       continue;
     }
@@ -351,6 +366,50 @@ function extractNameFromSubjectBlockFirstLine(line: string): string | null {
       return null;
     }
     return name;
+  }
+  const loose = line.match(/\bSubject\s+\d+\s+of\s+\d+\s*:\s*(.+)$/i);
+  if (loose?.[1]) {
+    const name = cleanLooseSubjectName(loose[1]);
+    if (name.length >= 2 && !isRejectedPersonName(name)) {
+      return name;
+    }
+  }
+  return null;
+}
+
+/**
+ * Subject header may wrap across lines or include extra tokens; try first few lines + merged.
+ */
+function extractSubjectNameFromBlockLines(blockLines: string[]): string | null {
+  const tryLine = (line: string): string | null => {
+    const t = line.trim();
+    if (!t) {
+      return null;
+    }
+    const strict = extractNameFromSubjectBlockFirstLine(t);
+    if (strict) {
+      return strict;
+    }
+    const loose = t.match(/\bSubject\s+\d+\s+of\s+\d+\s*:\s*(.+)$/i);
+    if (loose?.[1]) {
+      const n = cleanLooseSubjectName(loose[1]);
+      if (n.length >= 2 && !isRejectedPersonName(n)) {
+        return n;
+      }
+    }
+    return null;
+  };
+
+  for (let i = 0; i < Math.min(4, blockLines.length); i++) {
+    const n = tryLine(blockLines[i] ?? "");
+    if (n) {
+      return n;
+    }
+  }
+
+  const merged = [blockLines[0], blockLines[1]].filter(Boolean).join(" ").trim();
+  if (merged.length > 12 && /\bSubject\s+\d+\s+of\s+\d+\b/i.test(merged)) {
+    return tryLine(merged);
   }
   return null;
 }
@@ -427,7 +486,7 @@ function extractPeopleFromSubjectBlocks(lines: string[]): ExtractedPerson[] {
     if (blockLines.length === 0) {
       continue;
     }
-    const name = extractNameFromSubjectBlockFirstLine(blockLines[0] ?? "");
+    const name = extractSubjectNameFromBlockLines(blockLines);
     if (!name) {
       continue;
     }
@@ -528,7 +587,33 @@ const MAX_ADDRESS_STREET_CHARS = 120;
 
 /** Strip TLO metadata that sometimes prefixes or embeds in address fragments. */
 const ADDRESS_JUNK_PREFIX_RE =
-  /^(?:(?:Subdivision\s+Name|Address\s+contains|Address\s*:|(?:\d{4}\s*)?ID\s+Type|DL\s*#?|Reported\s+Address|Location)\s*:\s*)/i;
+  /^(?:(?:Subdivision\s+Name|Address\s+contains|Address\s*:|(?:\d{4}\s*)?ID\s+Type|DL\s*#?|Reported\s+Address|Location|Parcel|County|FIPS)\s*:\s*)/i;
+
+/** Remove mid-string TLO labels so street/city stay "physical address only" when possible. */
+function stripEmbeddedAddressMetadataPhrases(s: string): string {
+  let t = s;
+  t = t.replace(/\bSubdivision\s+Name\s*:\s*[^,|]+/gi, " ");
+  t = t.replace(/\bAddress\s+contains\s*:\s*[^,|]+/gi, " ");
+  t = t.replace(/\bOther\s+names?\s+at\s+(?:this\s+)?address\s*:\s*[^,|]+/gi, " ");
+  t = t.replace(
+    /\b(?:Current\s+)?Other\s+Phones?\s+at\s+address\s*:\s*[^,|]+/gi,
+    " "
+  );
+  t = t.replace(/\bOccupants?\s+at\s+address\s*:\s*[^,|]+/gi, " ");
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
+/** Dates sometimes leak before the house number when PDF order is odd. */
+function stripLeadingDateGarbageFromAddressFragment(s: string): string {
+  let t = s.trim();
+  const paren = /^\s*\(\d{2}\/\d{2}\/\d{4}\s+to\s+\d{2}\/\d{2}\/\d{4}\)\s+/i;
+  const plain = /^\s*\d{2}\/\d{2}\/\d{4}\s+to\s+\d{2}\/\d{2}\/\d{4}\s+/i;
+  for (let k = 0; k < 4 && (paren.test(t) || plain.test(t)); k++) {
+    t = t.replace(paren, "").replace(plain, "").trim();
+  }
+  return t;
+}
 
 function cleanAddressField(s: string): string {
   let t = normalizeName(s);
@@ -537,6 +622,8 @@ function cleanAddressField(s: string): string {
     prev = t;
     t = t.replace(ADDRESS_JUNK_PREFIX_RE, "").trim();
   }
+  t = stripEmbeddedAddressMetadataPhrases(t);
+  t = stripTrailingStrictAddressDateRange(t);
   return t;
 }
 
@@ -596,6 +683,9 @@ function cleanAddressStreet(raw: string): string {
     prev = t;
     t = t.replace(ADDRESS_JUNK_PREFIX_RE, "").trim();
   }
+  t = stripLeadingDateGarbageFromAddressFragment(t);
+  t = stripEmbeddedAddressMetadataPhrases(t);
+  t = stripTrailingStrictAddressDateRange(t);
   t = stripStreetToLeadingNumber(t);
   if (isAddressMetadataLine(t)) {
     return "";
@@ -1290,9 +1380,14 @@ function dedupePhonesPreferConfidence(phones: ExtractedPhone[]): ExtractedPhone[
 
 const MIN_PHONE_CONFIDENCE_PCT = 40;
 const MAX_PHONES_RETURNED = 10;
+/** Two-subject TLO reports often have >10 quality lines; don't drop the second subject's phones. */
+const MAX_PHONES_MULTI_SUBJECT = 20;
 
-/** Dedupe, then filter to confidence >= 40%, sort, cap at 10. */
-function finalizeExtractedPhones(phones: ExtractedPhone[]): ExtractedPhone[] {
+/** Dedupe, then filter to confidence >= 40%, sort, cap (higher cap when multiple subjects). */
+function finalizeExtractedPhones(
+  phones: ExtractedPhone[],
+  maxPhones: number = MAX_PHONES_RETURNED
+): ExtractedPhone[] {
   const deduped = dedupePhonesPreferConfidence(phones);
   const filtered = deduped.filter(
     (p) => p.confidence != null && p.confidence >= MIN_PHONE_CONFIDENCE_PCT
@@ -1310,7 +1405,7 @@ function finalizeExtractedPhones(phones: ExtractedPhone[]): ExtractedPhone[] {
     }
     return 0;
   });
-  return filtered.slice(0, MAX_PHONES_RETURNED);
+  return filtered.slice(0, maxPhones);
 }
 
 const PHONE_SECTION_PATTERNS: RegExp[] = [
@@ -1361,6 +1456,11 @@ function extractPhonesGlobalParenFormat(text: string): ExtractedPhone[] {
 }
 
 function extractPhones(text: string): ExtractedPhone[] {
+  const lines = text.split("\n");
+  const subjectBlockCount = findSubjectBlockRanges(lines).length;
+  const maxPhones =
+    subjectBlockCount >= 2 ? MAX_PHONES_MULTI_SUBJECT : MAX_PHONES_RETURNED;
+
   const collected: ExtractedPhone[] = [...extractPhonesGlobalParenFormat(text)];
 
   for (const pattern of PHONE_SECTION_PATTERNS) {
@@ -1378,7 +1478,6 @@ function extractPhones(text: string): ExtractedPhone[] {
     }
   }
 
-  const lines = text.split("\n");
   const blocks = findSubjectBlockRanges(lines);
 
   for (const { start, end } of blocks) {
@@ -1398,7 +1497,7 @@ function extractPhones(text: string): ExtractedPhone[] {
     }
   }
 
-  return finalizeExtractedPhones(collected);
+  return finalizeExtractedPhones(collected, maxPhones);
 }
 
 // --- Vehicles (strict, unchanged intent) --------------------------------------
