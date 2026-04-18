@@ -657,26 +657,49 @@ function parseAddressLineDateRange(fullLine: string): {
   return { date_from: null, date_to: null, date_range_text: null };
 }
 
+/** Drop dates unless both MM/DD/YYYY parts literally appear in this block (no cross-address reuse). */
+function restrictDateRangeToBlockText(
+  dr: { date_from: string | null; date_to: string | null; date_range_text: string | null },
+  block: string
+): { date_from: string | null; date_to: string | null; date_range_text: string | null } {
+  if (!dr.date_from || !dr.date_to) {
+    return dr;
+  }
+  const collapsed = block.replace(/\s+/g, " ");
+  if (collapsed.includes(dr.date_from) && collapsed.includes(dr.date_to)) {
+    return dr;
+  }
+  return { date_from: null, date_to: null, date_range_text: null };
+}
+
 /**
- * Dates for one street + city block: prefer city line (range usually follows ZIP), then street,
- * then whole block. Does not read other address rows.
+ * Two-line (or street+unit+city): dates only from city line, else street-side lines — never a
+ * synthetic join that could pull one shared range for every row.
  */
 function parseAddressDateRangeFromBlockLines(
   lines: string[],
   streetIdx: number,
   cityLineIdx: number
 ): { date_from: string | null; date_to: string | null; date_range_text: string | null } {
-  const streetRaw = lines[streetIdx]?.trim() ?? "";
+  const streetParts: string[] = [];
+  for (let k = streetIdx; k < cityLineIdx; k++) {
+    streetParts.push(lines[k]?.trim() ?? "");
+  }
+  const streetRaw = streetParts.join(" ").trim();
   const cityRaw = lines[cityLineIdx]?.trim() ?? "";
-  const fromCity = parseAddressLineDateRange(cityRaw);
+
+  const fromCity = restrictDateRangeToBlockText(parseAddressLineDateRange(cityRaw), cityRaw);
   if (fromCity.date_from) {
     return fromCity;
   }
-  const fromStreet = parseAddressLineDateRange(streetRaw);
+  const fromStreet = restrictDateRangeToBlockText(
+    parseAddressLineDateRange(streetRaw),
+    streetRaw
+  );
   if (fromStreet.date_from) {
     return fromStreet;
   }
-  return parseAddressLineDateRange(`${streetRaw} ${cityRaw}`);
+  return { date_from: null, date_to: null, date_range_text: null };
 }
 
 /** Embedded or standalone: number + street fragment, city, state zip */
@@ -686,9 +709,12 @@ const SINGLE_LINE_ADDR_RE =
 function extractAddressesSingleLine(text: string): ExtractedAddress[] {
   const out: ExtractedAddress[] = [];
   const seen = new Set<string>();
-  let m: RegExpExecArray | null;
   const re = new RegExp(SINGLE_LINE_ADDR_RE.source, "g");
-  while ((m = re.exec(text)) !== null) {
+  const allMatches = [...text.matchAll(re)];
+
+  for (let idx = 0; idx < allMatches.length; idx++) {
+    const m = allMatches[idx] as RegExpExecArray;
+    const mIndex = m.index ?? 0;
     const street = cleanAddressStreet(m[1]);
     if (!street || !isStreetStartsWithNumberOrPoBox(street)) {
       continue;
@@ -710,10 +736,23 @@ function extractAddressesSingleLine(text: string): ExtractedAddress[] {
       continue;
     }
     seen.add(key);
-    const lineStart = text.lastIndexOf("\n", m.index) + 1;
-    const lineEnd = text.indexOf("\n", m.index);
-    const fullLine = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const dr = parseAddressLineDateRange(fullLine);
+
+    const lineStart = text.lastIndexOf("\n", mIndex) + 1;
+    const lineEnd = text.indexOf("\n", mIndex);
+    const absLineEnd = lineEnd === -1 ? text.length : lineEnd;
+    const nextM = allMatches[idx + 1];
+    const blockEnd =
+      nextM &&
+      (nextM.index ?? 0) >= mIndex &&
+      (nextM.index ?? 0) < absLineEnd
+        ? (nextM.index ?? 0)
+        : absLineEnd;
+    const addressBlockText = text.slice(mIndex, blockEnd);
+    const dr = restrictDateRangeToBlockText(
+      parseAddressLineDateRange(addressBlockText),
+      addressBlockText
+    );
+
     out.push({
       id: id(),
       report_id: PLACEHOLDER_REPORT,
