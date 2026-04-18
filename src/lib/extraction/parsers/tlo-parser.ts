@@ -245,28 +245,175 @@ function isTitleCaseNameLine(line: string): boolean {
   return /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}$/.test(t);
 }
 
-function makePerson(fullName: string, dob: string | null): ExtractedPerson {
+type PersonIdentityFields = {
+  dob?: string | null;
+  ssn?: string | null;
+  drivers_license_number?: string | null;
+  drivers_license_state?: string | null;
+};
+
+function makePerson(fullName: string, identity: PersonIdentityFields = {}): ExtractedPerson {
   return {
     id: id(),
     report_id: PLACEHOLDER_REPORT,
     source_id: null,
     full_name: fullName.slice(0, 120),
-    dob,
+    dob: identity.dob ?? null,
+    ssn: identity.ssn ?? null,
+    drivers_license_number: identity.drivers_license_number ?? null,
+    drivers_license_state: identity.drivers_license_state ?? null,
     aliases: [],
     include_in_report: true,
   };
 }
 
+function mergePersonIdentity(a: ExtractedPerson, b: ExtractedPerson): ExtractedPerson {
+  return {
+    ...a,
+    dob: a.dob ?? b.dob,
+    ssn: a.ssn ?? b.ssn,
+    drivers_license_number: a.drivers_license_number ?? b.drivers_license_number,
+    drivers_license_state: a.drivers_license_state ?? b.drivers_license_state,
+    aliases: [...new Set([...(a.aliases ?? []), ...(b.aliases ?? [])])],
+  };
+}
+
 function dedupePeople(rows: ExtractedPerson[]): ExtractedPerson[] {
-  const seen = new Set<string>();
-  const out: ExtractedPerson[] = [];
+  const byKey = new Map<string, ExtractedPerson>();
   for (const p of rows) {
     const k = p.full_name.toUpperCase().replace(/\s+/g, " ");
-    if (seen.has(k) || out.length >= 32) {
+    const existing = byKey.get(k);
+    if (!existing) {
+      byKey.set(k, p);
       continue;
     }
-    seen.add(k);
-    out.push(p);
+    byKey.set(k, mergePersonIdentity(existing, p));
+  }
+  return [...byKey.values()].slice(0, 32);
+}
+
+/** Strong anchor: "Subject 1 of 2: MIGUEL ANGEL TRINIDAD" (common in TLO PDF text). */
+const SUBJECT_COLON_NAME_RE =
+  /Subject\s+\d+\s+of\s+\d+:\s*([A-Z][A-Z\s\-']*)/gi;
+
+function isRejectedPersonName(name: string): boolean {
+  const t = name.trim();
+  if (t.length < 3) {
+    return true;
+  }
+  if (/\b(?:Report|Page|License)\b/i.test(t)) {
+    return true;
+  }
+  const words = t.split(/\s+/).filter(Boolean);
+  return words.length > 4;
+}
+
+function extractPeopleFromSubjectColonPattern(text: string): ExtractedPerson[] {
+  const out: ExtractedPerson[] = [];
+  const re = new RegExp(SUBJECT_COLON_NAME_RE.source, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[1]?.trim() ?? "";
+    const name = normalizeName(raw.replace(/\s+/g, " "));
+    if (!name || isRejectedPersonName(name)) {
+      continue;
+    }
+    out.push(makePerson(name, {}));
+  }
+  return out;
+}
+
+function extractNameFromSubjectBlockFirstLine(line: string): string | null {
+  const m = line.match(/Subject\s+\d+\s+of\s+\d+\s*:\s*([A-Z][A-Z\s\-']*)/i);
+  if (m?.[1]) {
+    const name = normalizeName(m[1]);
+    if (!name || isRejectedPersonName(name)) {
+      return null;
+    }
+    return name;
+  }
+  return null;
+}
+
+/**
+ * Identity lines scoped to one subject block (between Subject markers).
+ * Sample labels: DOB 09/29/1985, SSN 326-71-0673, DL# T65354185277, DL State IL
+ */
+function extractIdentityFromSubjectBlockText(blockText: string): PersonIdentityFields {
+  let dob: string | null = null;
+  const lines = blockText.split("\n");
+  for (const raw of lines) {
+    const line = raw.trim();
+    const d = extractDobFromLine(line);
+    if (d) {
+      dob = d;
+      break;
+    }
+  }
+  if (!dob) {
+    for (const raw of lines) {
+      const line = raw.trim();
+      const alone = line.match(/^\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s*$/);
+      if (alone?.[1]) {
+        dob = alone[1];
+        break;
+      }
+    }
+  }
+
+  let ssn: string | null = null;
+  const ssnLabeled = blockText.match(
+    /(?:SSN|Social\s+Security)\s*#?\s*:?\s*(\d{3}-\d{2}-\d{4})/i
+  );
+  if (ssnLabeled?.[1]) {
+    ssn = ssnLabeled[1];
+  } else {
+    const ssnBare = blockText.match(/\b(\d{3}-\d{2}-\d{4})\b/);
+    if (ssnBare?.[1]) {
+      ssn = ssnBare[1];
+    }
+  }
+
+  let drivers_license_number: string | null = null;
+  const dlNum = blockText.match(
+    /\b(?:DL|D\.?\s*L\.?)\s*#?\s*:?\s*([A-Z0-9]{5,24})\b/i
+  );
+  if (dlNum?.[1]) {
+    drivers_license_number = dlNum[1];
+  }
+
+  let drivers_license_state: string | null = null;
+  const dlSt = blockText.match(
+    /\b(?:DL\s*State|Driver'?s?\s+License\s+State|License\s+State)\s*[:#]?\s*([A-Z]{2})\b/i
+  );
+  if (dlSt?.[1]) {
+    drivers_license_state = dlSt[1];
+  }
+
+  return {
+    dob: dob ?? undefined,
+    ssn: ssn ?? undefined,
+    drivers_license_number: drivers_license_number ?? undefined,
+    drivers_license_state: drivers_license_state ?? undefined,
+  };
+}
+
+/** One row per subject block with name + identity fields from that block’s text. */
+function extractPeopleFromSubjectBlocks(lines: string[]): ExtractedPerson[] {
+  const blocks = findSubjectBlockRanges(lines);
+  const out: ExtractedPerson[] = [];
+  for (const { start, end } of blocks) {
+    const blockLines = lines.slice(start, end);
+    if (blockLines.length === 0) {
+      continue;
+    }
+    const name = extractNameFromSubjectBlockFirstLine(blockLines[0] ?? "");
+    if (!name) {
+      continue;
+    }
+    const blockText = blockLines.join("\n");
+    const identity = extractIdentityFromSubjectBlockText(blockText);
+    out.push(makePerson(name, identity));
   }
   return out;
 }
@@ -286,7 +433,7 @@ function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
           break;
         }
       }
-      found.push(makePerson(labeled, dob));
+      found.push(makePerson(labeled, { dob }));
     }
   }
 
@@ -306,7 +453,7 @@ function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
       }
       const lab = extractNameFromLabelLine(line);
       if (lab) {
-        found.push(makePerson(lab, dob));
+        found.push(makePerson(lab, { dob }));
         break;
       }
       if (isNoiseLine(line)) {
@@ -316,7 +463,7 @@ function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
         continue;
       }
       if (isAllCapsNameWords(line) || isTitleCaseNameLine(line)) {
-        found.push(makePerson(line, dob));
+        found.push(makePerson(line, { dob }));
         break;
       }
     }
@@ -339,7 +486,7 @@ function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
       continue;
     }
     const dob = extractDobFromLine(next) ?? extractDobFromLine(line);
-    found.push(makePerson(line, dob));
+    found.push(makePerson(line, { dob }));
   }
 
   for (let i = 0; i < lines.length; i++) {
@@ -348,14 +495,28 @@ function extractPeopleGlobal(lines: string[]): ExtractedPerson[] {
       continue;
     }
     if (isAllCapsNameWords(line)) {
-      found.push(makePerson(line, null));
+      found.push(makePerson(line, {}));
     }
   }
 
-  return dedupePeople(found);
+  return found;
 }
 
 // --- Addresses: single-line "street, city, ST ZIP" anywhere + two-line pairs ----
+
+/** Strip TLO metadata that sometimes prefixes or embeds in address fragments. */
+const ADDRESS_JUNK_PREFIX_RE =
+  /^(?:(?:Subdivision\s+Name|Address\s+contains|Address\s*:|(?:\d{4}\s*)?ID\s+Type|DL\s*#?|Reported\s+Address|Location)\s*:\s*)/i;
+
+function cleanAddressField(s: string): string {
+  let t = normalizeName(s);
+  let prev = "";
+  while (t !== prev && t.length > 0) {
+    prev = t;
+    t = t.replace(ADDRESS_JUNK_PREFIX_RE, "").trim();
+  }
+  return t;
+}
 
 /** Embedded or standalone: number + street fragment, city, state zip */
 const SINGLE_LINE_ADDR_RE =
@@ -367,8 +528,8 @@ function extractAddressesSingleLine(text: string): ExtractedAddress[] {
   let m: RegExpExecArray | null;
   const re = new RegExp(SINGLE_LINE_ADDR_RE.source, "g");
   while ((m = re.exec(text)) !== null) {
-    const street = normalizeName(m[1]);
-    const city = normalizeName(m[2]);
+    const street = cleanAddressField(m[1]);
+    const city = cleanAddressField(m[2]);
     const state = m[3];
     const zip = m[4];
     if (street.length < 4 || city.length < 2) {
@@ -422,7 +583,7 @@ function extractAddressesFromLines(
       isUnitContinuationLine(lines[nextIdx] ?? "") &&
       nextIdx + 1 < lines.length
     ) {
-      street = `${street} ${lines[nextIdx].trim()}`.trim();
+      street = cleanAddressField(`${street} ${lines[nextIdx].trim()}`.trim());
       nextIdx++;
       cityLine = lines[nextIdx]?.trim() ?? "";
     }
@@ -430,6 +591,7 @@ function extractAddressesFromLines(
       i++;
       continue;
     }
+    street = cleanAddressField(street);
     const parsed = parseCityStateZipLine(cityLine);
     if (!parsed) {
       i++;
@@ -439,7 +601,8 @@ function extractAddressesFromLines(
       i++;
       continue;
     }
-    const { city, state, zip } = parsed;
+    const city = cleanAddressField(parsed.city);
+    const { state, zip } = parsed;
     const key = `${street}|${city}|${state}|${zip}`;
     if (seen.has(key) || out.length >= 50) {
       i++;
@@ -498,6 +661,10 @@ function extractAddressesGlobal(text: string, lines: string[]): ExtractedAddress
 
 // --- Associates: name + birth year + Age, or name + Age -----------------------
 
+/** Title-case names: "Ana Elsa Trinidad 1973 Age: 53" */
+const RELATIVE_TITLECASE_YEAR_AGE_RE =
+  /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+\d{4}\s+Age:\s+\d+/i;
+
 const NAME_YEAR_AGE_RE =
   /^(.+?)\s+(\d{4})\s+Age\s*:\s*\d+/i;
 
@@ -531,6 +698,29 @@ function extractAssociatesGlobal(lines: string[]): ExtractedAssociate[] {
       continue;
     }
     if (isNoiseLine(line)) {
+      continue;
+    }
+
+    const relTc = line.match(RELATIVE_TITLECASE_YEAR_AGE_RE);
+    if (relTc?.[1]) {
+      const name = cleanAssociateName(relTc[1]);
+      if (name) {
+        const key = name.toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({
+            id: id(),
+            report_id: PLACEHOLDER_REPORT,
+            source_id: null,
+            name,
+            relationship_label: null,
+            include_in_report: true,
+          });
+        }
+      }
+      if (out.length >= 40) {
+        break;
+      }
       continue;
     }
 
@@ -658,8 +848,45 @@ const PHONE_SECTION_PATTERNS: RegExp[] = [
   /(?:^|\n)\s*Current\s+Phones?\b/gi,
 ];
 
+/** TLO often prints phones as (708) 408-4328 — scan full text; skip "Other Phones at address" context. */
+const PHONE_PAREN_DASH_GLOBAL_RE = /\(\d{3}\)\s*\d{3}-\d{4}/g;
+
+function extractPhonesGlobalParenFormat(text: string): ExtractedPhone[] {
+  const out: ExtractedPhone[] = [];
+  const seenDigits = new Set<string>();
+  let m: RegExpExecArray | null;
+  const re = new RegExp(PHONE_PAREN_DASH_GLOBAL_RE.source, "g");
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[0];
+    const idx = m.index;
+    const ctxStart = Math.max(0, idx - 160);
+    const ctx = text.slice(ctxStart, idx + raw.length);
+    if (/Current\s+Other\s+Phones\s+at\s+address/i.test(ctx)) {
+      continue;
+    }
+    const key = normalizePhoneDigits(raw);
+    if (key.length !== 10 || seenDigits.has(key)) {
+      continue;
+    }
+    seenDigits.add(key);
+    out.push({
+      id: id(),
+      report_id: PLACEHOLDER_REPORT,
+      source_id: null,
+      phone_number: raw.trim(),
+      phone_type: "Possible phone",
+      include_in_report: true,
+    });
+    if (out.length >= 80) {
+      break;
+    }
+  }
+  return out;
+}
+
 function extractPhones(text: string): ExtractedPhone[] {
-  const collected: ExtractedPhone[] = [];
+  const collected: ExtractedPhone[] = [...extractPhonesGlobalParenFormat(text)];
+
   for (const pattern of PHONE_SECTION_PATTERNS) {
     const re = new RegExp(pattern.source, pattern.flags);
     let m: RegExpExecArray | null;
@@ -673,10 +900,6 @@ function extractPhones(text: string): ExtractedPhone[] {
         collected.push(...parsePhoneLine(line));
       }
     }
-  }
-
-  if (collected.length > 0) {
-    return dedupePhonesPreferConfidence(collected).slice(0, 80);
   }
 
   const lines = text.split("\n");
@@ -859,7 +1082,11 @@ export function parseTlo(rawText: string): ExtractedData {
   const text = normalizeExtractedText(rawText);
   const lines = text.split("\n");
 
-  const people = extractPeopleGlobal(lines);
+  const people = dedupePeople([
+    ...extractPeopleFromSubjectBlocks(lines),
+    ...extractPeopleFromSubjectColonPattern(text),
+    ...extractPeopleGlobal(lines),
+  ]);
   const addresses = extractAddressesGlobal(text, lines);
   const associates = extractAssociatesGlobal(lines);
   const phones = extractPhones(text);

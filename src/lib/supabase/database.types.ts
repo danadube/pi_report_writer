@@ -115,6 +115,9 @@ export interface Database {
           source_id: string | null;
           full_name: string;
           dob: string | null;
+          ssn: string | null;
+          drivers_license_number: string | null;
+          drivers_license_state: string | null;
           aliases: string[];
           include_in_report: boolean;
         };
@@ -124,6 +127,9 @@ export interface Database {
           source_id?: string | null;
           full_name?: string;
           dob?: string | null;
+          ssn?: string | null;
+          drivers_license_number?: string | null;
+          drivers_license_state?: string | null;
           aliases?: string[];
           include_in_report?: boolean;
         };
@@ -133,6 +139,9 @@ export interface Database {
           source_id?: string | null;
           full_name?: string;
           dob?: string | null;
+          ssn?: string | null;
+          drivers_license_number?: string | null;
+          drivers_license_state?: string | null;
           aliases?: string[];
           include_in_report?: boolean;
         };

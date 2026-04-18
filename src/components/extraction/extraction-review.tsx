@@ -89,7 +89,17 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
             <ReviewRow
               key={person.id}
               label={person.full_name}
-              sub={[person.dob ? `DOB: ${person.dob}` : null, person.aliases.length > 0 ? `AKA: ${person.aliases.join(", ")}` : null].filter(Boolean).join(" · ")}
+              sub={[
+                person.dob ? `DOB: ${person.dob}` : null,
+                person.ssn ? `SSN: ${person.ssn}` : null,
+                person.drivers_license_number
+                  ? `DL#: ${person.drivers_license_number}`
+                  : null,
+                person.drivers_license_state ? `DL state: ${person.drivers_license_state}` : null,
+                person.aliases.length > 0 ? `AKA: ${person.aliases.join(", ")}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
               included={person.include_in_report}
               onToggle={() => {
                 onChange({

@@ -4,6 +4,10 @@ export interface ExtractedPerson {
   source_id: string | null;
   full_name: string;
   dob: string | null;
+  /** SSN as extracted from source (e.g. 326-71-0673). */
+  ssn: string | null;
+  drivers_license_number: string | null;
+  drivers_license_state: string | null;
   aliases: string[];
   include_in_report: boolean;
 }

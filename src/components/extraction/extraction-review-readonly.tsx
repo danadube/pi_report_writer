@@ -78,6 +78,13 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
                 <InclusionHint included={p.include_in_report} />
                 <div className="text-xs text-[#8b90a0] mt-0.5 space-y-0.5">
                   {p.dob ? <p>DOB: {p.dob}</p> : null}
+                  {p.ssn ? <p>SSN: {p.ssn}</p> : null}
+                  {p.drivers_license_number ? (
+                    <p>Driver license #: {p.drivers_license_number}</p>
+                  ) : null}
+                  {p.drivers_license_state ? (
+                    <p>Driver license state: {p.drivers_license_state}</p>
+                  ) : null}
                   {p.aliases.length > 0 ? <p>Also known as: {p.aliases.join(", ")}</p> : null}
                 </div>
               </li>

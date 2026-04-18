@@ -77,6 +77,9 @@ export async function replaceExtractedDataForSource(
       source_id: sourceId,
       full_name: clip(p.full_name, MAX_TEXT_FIELD) ?? "",
       dob: clip(p.dob, 120),
+      ssn: clip(p.ssn, 32),
+      drivers_license_number: clip(p.drivers_license_number, 64),
+      drivers_license_state: clip(p.drivers_license_state, 8),
       aliases: (p.aliases ?? []).map((a) => clip(a, MAX_TEXT_FIELD) ?? "").filter(Boolean),
       include_in_report: p.include_in_report,
     }));

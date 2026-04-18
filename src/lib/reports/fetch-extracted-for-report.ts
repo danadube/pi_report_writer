@@ -97,6 +97,9 @@ export async function fetchExtractedGroupedBySource(
       source_id: row.source_id,
       full_name: row.full_name,
       dob: row.dob,
+      ssn: row.ssn,
+      drivers_license_number: row.drivers_license_number,
+      drivers_license_state: row.drivers_license_state,
       aliases: row.aliases ?? [],
       include_in_report: row.include_in_report,
     };
