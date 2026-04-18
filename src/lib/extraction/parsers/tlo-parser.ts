@@ -1777,57 +1777,21 @@ function extractEmailsFromText(text: string): ExtractedEmail[] {
   return out;
 }
 
-function tagAddresses(
-  rows: ExtractedAddress[],
-  subjectIndex: number
-): ExtractedAddress[] {
-  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
-}
-
-function tagPhones(rows: ExtractedPhone[], subjectIndex: number): ExtractedPhone[] {
-  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
-}
-
-function tagEmails(rows: ExtractedEmail[], subjectIndex: number): ExtractedEmail[] {
-  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
-}
-
-function tagVehicles(rows: ExtractedVehicle[], subjectIndex: number): ExtractedVehicle[] {
-  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
-}
-
-function tagAssociates(
-  rows: ExtractedAssociate[],
-  subjectIndex: number
-): ExtractedAssociate[] {
-  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
-}
-
-function tagEmployment(
-  rows: ExtractedEmployment[],
-  subjectIndex: number
-): ExtractedEmployment[] {
-  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
-}
-
 /**
- * TLO parse: independent global detectors over line stream (no primary reliance on section blocks).
- * Phones / vehicles reuse section helpers where helpful; addresses also match inline "st, city, ST zip".
+ * TLO parse: with 2+ subject blocks, phones/addresses/emails/associates/vehicles/employment
+ * are extracted only from each block’s text; subject_index is set in that loop.
+ * Otherwise one pass on the full document with subject_index 1.
  */
 export function parseTlo(rawText: string): ExtractedData {
   const text = normalizeExtractedText(rawText);
   const lines = text.split("\n");
   const subjectBlocks = findSubjectBlockRanges(lines);
-  const multiSubject = subjectBlocks.length >= 2;
 
   const people = dedupePeople([
     ...extractPeopleFromSubjectBlocks(lines),
     ...extractPeopleFromSubjectColonPattern(text),
     ...extractPeopleGlobal(lines),
   ]);
-
-  const phoneBudget =
-    subjectBlocks.length >= 2 ? MAX_PHONES_MULTI_SUBJECT : MAX_PHONES_RETURNED;
 
   let addresses: ExtractedAddress[];
   let associates: ExtractedAssociate[];
@@ -1836,7 +1800,7 @@ export function parseTlo(rawText: string): ExtractedData {
   let vehicles: ExtractedVehicle[];
   let employment: ExtractedEmployment[];
 
-  if (multiSubject) {
+  if (subjectBlocks.length >= 2) {
     addresses = [];
     associates = [];
     phones = [];
@@ -1847,26 +1811,73 @@ export function parseTlo(rawText: string): ExtractedData {
       const { start, end } = subjectBlocks[bi] ?? { start: 0, end: 0 };
       const blockLines = lines.slice(start, end);
       const blockText = blockLines.join("\n");
-      const si = bi + 1;
-      addresses.push(...tagAddresses(extractAddressesGlobal(blockText, blockLines), si));
-      associates.push(
-        ...tagAssociates(extractAssociatesGlobal(blockLines, blockText), si)
-      );
-      phones.push(...tagPhones(extractPhonesCore(blockText, phoneBudget), si));
-      emails.push(...tagEmails(extractEmailsFromText(blockText), si));
-      vehicles.push(...tagVehicles(extractVehicles(blockText), si));
-      employment.push(...tagEmployment(extractEmploymentGlobal(blockText), si));
+      const subjectIndex = bi + 1;
+
+      const blockAddresses = extractAddressesGlobal(blockText, blockLines);
+      blockAddresses.forEach((a) => {
+        a.subject_index = subjectIndex;
+      });
+      addresses.push(...blockAddresses);
+
+      const blockPhones = extractPhones(blockText);
+      blockPhones.forEach((p) => {
+        p.subject_index = subjectIndex;
+      });
+      phones.push(...blockPhones);
+
+      const blockEmails = extractEmailsFromText(blockText);
+      blockEmails.forEach((e) => {
+        e.subject_index = subjectIndex;
+      });
+      emails.push(...blockEmails);
+
+      const blockAssociates = extractAssociatesGlobal(blockLines, blockText);
+      blockAssociates.forEach((a) => {
+        a.subject_index = subjectIndex;
+      });
+      associates.push(...blockAssociates);
+
+      const blockVehicles = extractVehicles(blockText);
+      blockVehicles.forEach((v) => {
+        v.subject_index = subjectIndex;
+      });
+      vehicles.push(...blockVehicles);
+
+      const blockEmployment = extractEmploymentGlobal(blockText);
+      blockEmployment.forEach((e) => {
+        e.subject_index = subjectIndex;
+      });
+      employment.push(...blockEmployment);
     }
     addresses = dedupeAddresses(addresses);
     associates = dedupeAssociates(associates);
     phones = dedupePhonesPreferConfidence(phones);
   } else {
-    addresses = tagAddresses(extractAddressesGlobal(text, lines), 1);
-    associates = tagAssociates(extractAssociatesGlobal(lines, text), 1);
-    phones = tagPhones(extractPhonesCore(text, phoneBudget), 1);
-    emails = tagEmails(extractEmailsFromText(text), 1);
-    vehicles = tagVehicles(extractVehicles(text), 1);
-    employment = tagEmployment(extractEmploymentGlobal(text), 1);
+    const subjectIndex = 1;
+    addresses = extractAddressesGlobal(text, lines);
+    addresses.forEach((a) => {
+      a.subject_index = subjectIndex;
+    });
+    associates = extractAssociatesGlobal(lines, text);
+    associates.forEach((a) => {
+      a.subject_index = subjectIndex;
+    });
+    phones = extractPhones(text);
+    phones.forEach((p) => {
+      p.subject_index = subjectIndex;
+    });
+    emails = extractEmailsFromText(text);
+    emails.forEach((e) => {
+      e.subject_index = subjectIndex;
+    });
+    vehicles = extractVehicles(text);
+    vehicles.forEach((v) => {
+      v.subject_index = subjectIndex;
+    });
+    employment = extractEmploymentGlobal(text);
+    employment.forEach((e) => {
+      e.subject_index = subjectIndex;
+    });
   }
 
   return {
