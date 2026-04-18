@@ -67,6 +67,7 @@ export async function replaceExtractedDataForSource(
   const people = capRows(data.people);
   const addresses = capRows(data.addresses);
   const phones = capRows(data.phones);
+  const emails = capRows(data.emails);
   const vehicles = capRows(data.vehicles);
   const associates = capRows(data.associates);
   const employment = capRows(data.employment);
@@ -81,6 +82,8 @@ export async function replaceExtractedDataForSource(
       drivers_license_number: clip(p.drivers_license_number, 64),
       drivers_license_state: clip(p.drivers_license_state, 8),
       aliases: (p.aliases ?? []).map((a) => clip(a, MAX_TEXT_FIELD) ?? "").filter(Boolean),
+      subject_index: p.subject_index ?? null,
+      is_primary_subject: p.is_primary_subject,
       include_in_report: p.include_in_report,
     }));
     const { error } = await supabase.from("extracted_people").insert(rows);
@@ -127,6 +130,24 @@ export async function replaceExtractedDataForSource(
     if (error) {
       await wipeExtractedForSource(supabase, reportId, sourceId);
       return { ok: false, message: `extracted_phones insert: ${error.message}` };
+    }
+  }
+
+  if (emails.length > 0) {
+    const rows = emails.map((e) => ({
+      report_id: reportId,
+      source_id: sourceId,
+      email: clip(e.email, 320) ?? "",
+      confidence:
+        e.confidence != null && e.confidence >= 0 && e.confidence <= 100
+          ? Math.round(e.confidence)
+          : null,
+      include_in_report: e.include_in_report,
+    }));
+    const { error } = await supabase.from("extracted_emails").insert(rows);
+    if (error) {
+      await wipeExtractedForSource(supabase, reportId, sourceId);
+      return { ok: false, message: `extracted_emails insert: ${error.message}` };
     }
   }
 

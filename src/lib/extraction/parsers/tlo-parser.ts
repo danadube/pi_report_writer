@@ -2,6 +2,7 @@ import type {
   ExtractedAddress,
   ExtractedAssociate,
   ExtractedData,
+  ExtractedEmail,
   ExtractedEmployment,
   ExtractedPerson,
   ExtractedPhone,
@@ -270,6 +271,8 @@ type PersonIdentityFields = {
   ssn?: string | null;
   drivers_license_number?: string | null;
   drivers_license_state?: string | null;
+  subject_index?: number | null;
+  is_primary_subject?: boolean;
 };
 
 function makePerson(fullName: string, identity: PersonIdentityFields = {}): ExtractedPerson {
@@ -283,6 +286,8 @@ function makePerson(fullName: string, identity: PersonIdentityFields = {}): Extr
     drivers_license_number: identity.drivers_license_number ?? null,
     drivers_license_state: identity.drivers_license_state ?? null,
     aliases: [],
+    subject_index: identity.subject_index ?? null,
+    is_primary_subject: identity.is_primary_subject ?? true,
     include_in_report: true,
   };
 }
@@ -295,6 +300,9 @@ function mergePersonIdentity(a: ExtractedPerson, b: ExtractedPerson): ExtractedP
     drivers_license_number: a.drivers_license_number ?? b.drivers_license_number,
     drivers_license_state: a.drivers_license_state ?? b.drivers_license_state,
     aliases: [...new Set([...(a.aliases ?? []), ...(b.aliases ?? [])])],
+    subject_index: a.subject_index ?? b.subject_index ?? null,
+    is_primary_subject:
+      a.subject_index != null ? a.is_primary_subject : (b.is_primary_subject ?? true),
   };
 }
 
@@ -313,11 +321,11 @@ function dedupePeople(rows: ExtractedPerson[]): ExtractedPerson[] {
 }
 
 /**
- * Full line after colon — not limited to 4 ALL-CAPS tokens (long / compound names).
+ * Capture subject slot + name — not limited to short ALL-CAPS runs.
  * Stops at "(" so trailing (dates) on the same line is not part of the name.
  */
 const SUBJECT_COLON_NAME_RE =
-  /Subject\s+\d+\s+of\s+\d+\s*:\s*([^\n(]+)/gi;
+  /Subject\s+(\d+)\s+of\s+\d+\s*:\s*([^\n(]+)/gi;
 
 function isRejectedPersonName(name: string): boolean {
   const t = name.trim();
@@ -348,12 +356,18 @@ function extractPeopleFromSubjectColonPattern(text: string): ExtractedPerson[] {
   const re = new RegExp(SUBJECT_COLON_NAME_RE.source, "gi");
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const raw = m[1]?.trim() ?? "";
+    const subjectNum = parseInt(m[1] ?? "1", 10);
+    const raw = m[2]?.trim() ?? "";
     const name = cleanLooseSubjectName(raw.replace(/\s+/g, " "));
     if (!name || isRejectedPersonName(name)) {
       continue;
     }
-    out.push(makePerson(name, {}));
+    out.push(
+      makePerson(name, {
+        subject_index: Number.isFinite(subjectNum) ? subjectNum : null,
+        is_primary_subject: subjectNum === 1,
+      })
+    );
   }
   return out;
 }
@@ -481,7 +495,8 @@ function extractIdentityFromSubjectBlockText(blockText: string): PersonIdentityF
 function extractPeopleFromSubjectBlocks(lines: string[]): ExtractedPerson[] {
   const blocks = findSubjectBlockRanges(lines);
   const out: ExtractedPerson[] = [];
-  for (const { start, end } of blocks) {
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const { start, end } = blocks[bi] ?? { start: 0, end: 0 };
     const blockLines = lines.slice(start, end);
     if (blockLines.length === 0) {
       continue;
@@ -492,7 +507,14 @@ function extractPeopleFromSubjectBlocks(lines: string[]): ExtractedPerson[] {
     }
     const blockText = blockLines.join("\n");
     const identity = extractIdentityFromSubjectBlockText(blockText);
-    out.push(makePerson(name, identity));
+    const subjectIndex = bi + 1;
+    out.push(
+      makePerson(name, {
+        ...identity,
+        subject_index: subjectIndex,
+        is_primary_subject: subjectIndex === 1,
+      })
+    );
   }
   return out;
 }
@@ -615,6 +637,15 @@ function stripLeadingDateGarbageFromAddressFragment(s: string): string {
   return t;
 }
 
+/** Remove date ranges that leaked into the middle or end of street/city display text. */
+function stripLooseDateRangesFromAddressText(s: string): string {
+  return s
+    .replace(/\s*\(\d{2}\/\d{2}\/\d{4}\s+to\s+\d{2}\/\d{2}\/\d{4}\)/gi, " ")
+    .replace(/\s+\d{2}\/\d{2}\/\d{4}\s+to\s+\d{2}\/\d{2}\/\d{4}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function cleanAddressField(s: string): string {
   let t = normalizeName(s);
   let prev = "";
@@ -624,6 +655,7 @@ function cleanAddressField(s: string): string {
   }
   t = stripEmbeddedAddressMetadataPhrases(t);
   t = stripTrailingStrictAddressDateRange(t);
+  t = stripLooseDateRangesFromAddressText(t);
   return t;
 }
 
@@ -686,6 +718,7 @@ function cleanAddressStreet(raw: string): string {
   t = stripLeadingDateGarbageFromAddressFragment(t);
   t = stripEmbeddedAddressMetadataPhrases(t);
   t = stripTrailingStrictAddressDateRange(t);
+  t = stripLooseDateRangesFromAddressText(t);
   t = stripStreetToLeadingNumber(t);
   if (isAddressMetadataLine(t)) {
     return "";
@@ -966,13 +999,38 @@ function dedupeAddresses(rows: ExtractedAddress[]): ExtractedAddress[] {
   return out;
 }
 
+/** Drop date fields if tokens were not present before display cleanup; then strip leaked ranges from text. */
+function finalizeAddressRow(a: ExtractedAddress): ExtractedAddress {
+  const origCore = `${a.street} ${a.city}`.replace(/\s+/g, " ");
+  let date_from = a.date_from;
+  let date_to = a.date_to;
+  let date_range_text = a.date_range_text;
+  if (date_from && date_to) {
+    if (!origCore.includes(date_from) || !origCore.includes(date_to)) {
+      date_from = null;
+      date_to = null;
+      date_range_text = null;
+    }
+  }
+  const street = stripLooseDateRangesFromAddressText(a.street);
+  const city = stripLooseDateRangesFromAddressText(a.city);
+  return {
+    ...a,
+    street,
+    city,
+    date_from,
+    date_to,
+    date_range_text,
+  };
+}
+
 function extractAddressesGlobal(text: string, lines: string[]): ExtractedAddress[] {
   const single = extractAddressesSingleLine(text);
   const filtered = lines.filter(
     (l) => !isCurrentOtherPhonesAtAddressLine(l) && !isAddressMetadataLine(l)
   );
   const twoLine = extractAddressesFromLines(filtered, null);
-  return dedupeAddresses([...single, ...twoLine]);
+  return dedupeAddresses([...single, ...twoLine].map(finalizeAddressRow));
 }
 
 // --- Associates: name + birth year + Age, or name + Age -----------------------
@@ -1649,6 +1707,60 @@ function extractEmploymentGlobal(text: string): ExtractedEmployment[] {
   return out;
 }
 
+const EMAIL_RE =
+  /\b[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}\b/g;
+
+function isPlausibleExtractedEmail(e: string): boolean {
+  const lower = e.toLowerCase();
+  if (lower.includes("..")) {
+    return false;
+  }
+  if (/@(?:example|test|localhost|invalid)\./i.test(lower)) {
+    return false;
+  }
+  return true;
+}
+
+function extractEmailsFromText(text: string): ExtractedEmail[] {
+  const out: ExtractedEmail[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  const re = new RegExp(EMAIL_RE.source, "g");
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[0];
+    const idx = m.index;
+    if (idx > 0 && text[idx - 1] === "@") {
+      continue;
+    }
+    if (!isPlausibleExtractedEmail(raw)) {
+      continue;
+    }
+    const key = raw.toLowerCase();
+    if (seen.has(key) || out.length >= 40) {
+      continue;
+    }
+    seen.add(key);
+    const after = text.slice(idx + raw.length, idx + raw.length + 96);
+    const pct = after.match(/^\s*\((\d{1,3})%\)/);
+    let confidence: number | null = null;
+    if (pct?.[1]) {
+      const n = parseInt(pct[1], 10);
+      if (!Number.isNaN(n)) {
+        confidence = Math.min(100, Math.max(0, n));
+      }
+    }
+    out.push({
+      id: id(),
+      report_id: PLACEHOLDER_REPORT,
+      source_id: null,
+      email: raw.trim(),
+      confidence,
+      include_in_report: true,
+    });
+  }
+  return out;
+}
+
 /**
  * TLO parse: independent global detectors over line stream (no primary reliance on section blocks).
  * Phones / vehicles reuse section helpers where helpful; addresses also match inline "st, city, ST zip".
@@ -1665,6 +1777,7 @@ export function parseTlo(rawText: string): ExtractedData {
   const addresses = extractAddressesGlobal(text, lines);
   const associates = extractAssociatesGlobal(lines, text);
   const phones = extractPhones(text);
+  const emails = extractEmailsFromText(text);
   const vehicles = extractVehicles(text);
   const employment = extractEmploymentGlobal(text);
 
@@ -1672,6 +1785,7 @@ export function parseTlo(rawText: string): ExtractedData {
     people,
     addresses,
     phones,
+    emails,
     vehicles,
     associates,
     employment,

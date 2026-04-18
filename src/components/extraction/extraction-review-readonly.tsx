@@ -48,6 +48,7 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
     data.people.length +
       data.addresses.length +
       data.phones.length +
+      data.emails.length +
       data.vehicles.length +
       data.associates.length +
       data.employment.length >
@@ -75,6 +76,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
                 <span className={p.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
                   {p.full_name}
                 </span>
+                {p.subject_index != null ? (
+                  <span className="ml-2 text-[10px] uppercase tracking-wide text-[#6b7080] shrink-0">
+                    {p.is_primary_subject ? "Primary" : `Subject ${p.subject_index}`}
+                  </span>
+                ) : null}
                 <InclusionHint included={p.include_in_report} />
                 <div className="text-xs text-[#8b90a0] mt-0.5 space-y-0.5">
                   {p.dob ? <p>DOB: {p.dob}</p> : null}
@@ -138,6 +144,26 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
                     {p.phone_type ? `(${p.phone_type})` : ""}
                     {p.confidence != null ? `${p.phone_type ? " " : ""}${p.confidence}%` : ""}
                   </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CategoryBlock>
+
+      <CategoryBlock title="Emails">
+        {data.emails.length === 0 ? (
+          <EmptyLine text="None extracted." />
+        ) : (
+          <ul className="space-y-1.5">
+            {data.emails.map((e) => (
+              <li key={e.id} className="text-sm flex flex-wrap items-baseline gap-x-2">
+                <span className={e.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                  {e.email}
+                </span>
+                <InclusionHint included={e.include_in_report} />
+                {e.confidence != null ? (
+                  <span className="text-xs text-[#8b90a0]">{e.confidence}%</span>
                 ) : null}
               </li>
             ))}

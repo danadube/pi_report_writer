@@ -63,9 +63,20 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
     });
   }
 
+  function toggleEmail(id: string) {
+    onChange({
+      ...data,
+      emails: data.emails.map((e) =>
+        e.id === id ? { ...e, include_in_report: !e.include_in_report } : e
+      ),
+    });
+  }
+
   const isEmpty =
+    data.people.length === 0 &&
     data.addresses.length === 0 &&
     data.phones.length === 0 &&
+    data.emails.length === 0 &&
     data.vehicles.length === 0 &&
     data.associates.length === 0 &&
     data.employment.length === 0;
@@ -90,6 +101,11 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
               key={person.id}
               label={person.full_name}
               sub={[
+                person.subject_index != null
+                  ? person.is_primary_subject
+                    ? "Primary subject"
+                    : `Subject ${person.subject_index}`
+                  : null,
                 person.dob ? `DOB: ${person.dob}` : null,
                 person.ssn ? `SSN: ${person.ssn}` : null,
                 person.drivers_license_number
@@ -147,6 +163,20 @@ export function ExtractionReview({ data, onChange }: ExtractionReviewProps) {
               }
               included={phone.include_in_report}
               onToggle={() => togglePhone(phone.id)}
+            />
+          ))}
+        </ReviewSection>
+      )}
+
+      {data.emails.length > 0 && (
+        <ReviewSection title="Emails">
+          {data.emails.map((em) => (
+            <ReviewRow
+              key={em.id}
+              label={em.email}
+              sub={em.confidence != null ? `${em.confidence}%` : undefined}
+              included={em.include_in_report}
+              onToggle={() => toggleEmail(em.id)}
             />
           ))}
         </ReviewSection>

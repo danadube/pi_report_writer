@@ -22,6 +22,7 @@ const EMPTY_EXTRACTED: ExtractedData = {
   people: [],
   addresses: [],
   phones: [],
+  emails: [],
   vehicles: [],
   associates: [],
   employment: [],

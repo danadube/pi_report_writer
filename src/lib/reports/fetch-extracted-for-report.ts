@@ -4,6 +4,7 @@ import type {
   ExtractedAddress,
   ExtractedAssociate,
   ExtractedData,
+  ExtractedEmail,
   ExtractedEmployment,
   ExtractedPerson,
   ExtractedPhone,
@@ -18,6 +19,7 @@ export function emptyExtractedData(): ExtractedData {
     people: [],
     addresses: [],
     phones: [],
+    emails: [],
     vehicles: [],
     associates: [],
     employment: [],
@@ -30,6 +32,7 @@ export function countStructuredFields(data: ExtractedData): number {
     data.people.length +
     data.addresses.length +
     data.phones.length +
+    data.emails.length +
     data.vehicles.length +
     data.associates.length +
     data.employment.length
@@ -83,6 +86,7 @@ export async function fetchExtractedGroupedBySource(
     { data: peopleRows, error: ePeople },
     { data: addrRows, error: eAddr },
     { data: phoneRows, error: ePhone },
+    { data: emailRows, error: eEmail },
     { data: vehRows, error: eVeh },
     { data: assocRows, error: eAssoc },
     { data: empRows, error: eEmp },
@@ -90,6 +94,7 @@ export async function fetchExtractedGroupedBySource(
     supabase.from("extracted_people").select("*").eq("report_id", reportId),
     supabase.from("extracted_addresses").select("*").eq("report_id", reportId),
     supabase.from("extracted_phones").select("*").eq("report_id", reportId),
+    supabase.from("extracted_emails").select("*").eq("report_id", reportId),
     supabase.from("extracted_vehicles").select("*").eq("report_id", reportId),
     supabase.from("extracted_associates").select("*").eq("report_id", reportId),
     supabase.from("extracted_employment").select("*").eq("report_id", reportId),
@@ -99,6 +104,7 @@ export async function fetchExtractedGroupedBySource(
     ePeople ??
     eAddr ??
     ePhone ??
+    eEmail ??
     eVeh ??
     eAssoc ??
     eEmp ??
@@ -123,6 +129,8 @@ export async function fetchExtractedGroupedBySource(
       drivers_license_number: row.drivers_license_number,
       drivers_license_state: row.drivers_license_state,
       aliases: row.aliases ?? [],
+      subject_index: row.subject_index ?? null,
+      is_primary_subject: row.is_primary_subject ?? true,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).people.push(p);
@@ -163,6 +171,21 @@ export async function fetchExtractedGroupedBySource(
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).phones.push(p);
+  }
+
+  for (const row of emailRows ?? []) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
+      continue;
+    }
+    const e: ExtractedEmail = {
+      id: row.id,
+      report_id: row.report_id,
+      source_id: row.source_id,
+      email: row.email,
+      confidence: row.confidence,
+      include_in_report: row.include_in_report,
+    };
+    ensureBucket(bySource, String(row.source_id)).emails.push(e);
   }
 
   for (const row of vehRows ?? []) {

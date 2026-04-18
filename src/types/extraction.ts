@@ -9,6 +9,10 @@ export interface ExtractedPerson {
   drivers_license_number: string | null;
   drivers_license_state: string | null;
   aliases: string[];
+  /** TLO subject slot when known (Subject 1 of 2 → 1). */
+  subject_index: number | null;
+  /** Investigation primary subject (typically TLO Subject 1). */
+  is_primary_subject: boolean;
   include_in_report: boolean;
 }
 
@@ -37,6 +41,16 @@ export interface ExtractedPhone {
   phone_number: string;
   /** e.g. Mobile, LandLine, VoIP, or legacy "Possible phone (High confidence)". */
   phone_type: string | null;
+  /** Source-reported match confidence 0–100 when present. */
+  confidence: number | null;
+  include_in_report: boolean;
+}
+
+export interface ExtractedEmail {
+  id: string;
+  report_id: string;
+  source_id: string | null;
+  email: string;
   /** Source-reported match confidence 0–100 when present. */
   confidence: number | null;
   include_in_report: boolean;
@@ -77,6 +91,7 @@ export interface ExtractedData {
   people: ExtractedPerson[];
   addresses: ExtractedAddress[];
   phones: ExtractedPhone[];
+  emails: ExtractedEmail[];
   vehicles: ExtractedVehicle[];
   associates: ExtractedAssociate[];
   employment: ExtractedEmployment[];

@@ -119,6 +119,8 @@ export interface Database {
           drivers_license_number: string | null;
           drivers_license_state: string | null;
           aliases: string[];
+          subject_index: number | null;
+          is_primary_subject: boolean;
           include_in_report: boolean;
         };
         Insert: {
@@ -131,6 +133,8 @@ export interface Database {
           drivers_license_number?: string | null;
           drivers_license_state?: string | null;
           aliases?: string[];
+          subject_index?: number | null;
+          is_primary_subject?: boolean;
           include_in_report?: boolean;
         };
         Update: {
@@ -143,6 +147,8 @@ export interface Database {
           drivers_license_number?: string | null;
           drivers_license_state?: string | null;
           aliases?: string[];
+          subject_index?: number | null;
+          is_primary_subject?: boolean;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -217,6 +223,33 @@ export interface Database {
           source_id?: string | null;
           phone_number?: string;
           phone_type?: string | null;
+          confidence?: number | null;
+          include_in_report?: boolean;
+        };
+        Relationships: [];
+      };
+      extracted_emails: {
+        Row: {
+          id: string;
+          report_id: string;
+          source_id: string | null;
+          email: string;
+          confidence: number | null;
+          include_in_report: boolean;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          source_id?: string | null;
+          email?: string;
+          confidence?: number | null;
+          include_in_report?: boolean;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          source_id?: string | null;
+          email?: string;
           confidence?: number | null;
           include_in_report?: boolean;
         };
