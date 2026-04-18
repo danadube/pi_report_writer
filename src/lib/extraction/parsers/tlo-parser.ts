@@ -309,7 +309,8 @@ function mergePersonIdentity(a: ExtractedPerson, b: ExtractedPerson): ExtractedP
 function dedupePeople(rows: ExtractedPerson[]): ExtractedPerson[] {
   const byKey = new Map<string, ExtractedPerson>();
   for (const p of rows) {
-    const k = p.full_name.toUpperCase().replace(/\s+/g, " ");
+    const nameKey = p.full_name.toUpperCase().replace(/\s+/g, " ");
+    const k = p.subject_index != null ? `${p.subject_index}|${nameKey}` : nameKey;
     const existing = byKey.get(k);
     if (!existing) {
       byKey.set(k, p);
@@ -888,6 +889,7 @@ function extractAddressesSingleLine(text: string): ExtractedAddress[] {
       date_range_text: dr.date_range_text,
       date_from: dr.date_from,
       date_to: dr.date_to,
+      subject_index: null,
       include_in_report: true,
     });
   }
@@ -975,6 +977,7 @@ function extractAddressesFromLines(
       date_range_text: drLine.date_range_text,
       date_from: drLine.date_from,
       date_to: drLine.date_to,
+      subject_index: null,
       include_in_report: true,
     });
     i = nextIdx + 1;
@@ -990,10 +993,11 @@ function dedupeAddresses(rows: ExtractedAddress[]): ExtractedAddress[] {
     const k = `${a.street}|${a.city}|${a.state}|${a.zip}`
       .replace(/\s+/g, " ")
       .toUpperCase();
-    if (seen.has(k) || out.length >= 60) {
+    const scoped = `${k}|${a.subject_index ?? "∅"}`;
+    if (seen.has(scoped) || out.length >= 60) {
       continue;
     }
-    seen.add(k);
+    seen.add(scoped);
     out.push(a);
   }
   return out;
@@ -1150,7 +1154,7 @@ function dedupeAssociates(rows: ExtractedAssociate[]): ExtractedAssociate[] {
   const seen = new Set<string>();
   const out: ExtractedAssociate[] = [];
   for (const row of rows) {
-    const key = row.name.replace(/\s+/g, " ").toUpperCase();
+    const key = `${row.subject_index ?? "∅"}|${row.name.replace(/\s+/g, " ").toUpperCase()}`;
     if (seen.has(key) || out.length >= 40) {
       continue;
     }
@@ -1180,6 +1184,7 @@ function pushAssociateFromName(
     source_id: null,
     name,
     relationship_label: null,
+    subject_index: null,
     include_in_report: true,
   });
 }
@@ -1415,6 +1420,7 @@ function parsePhoneLine(line: string): ExtractedPhone[] {
       phone_number: raw.trim(),
       phone_type: phoneType,
       confidence,
+      subject_index: null,
       include_in_report: true,
     });
   }
@@ -1428,9 +1434,10 @@ function dedupePhonesPreferConfidence(phones: ExtractedPhone[]): ExtractedPhone[
     if (k.length !== 10) {
       continue;
     }
-    const existing = byDigit.get(k);
+    const scoped = `${k}|${p.subject_index ?? "∅"}`;
+    const existing = byDigit.get(scoped);
     if (!existing || isBetterPhoneCandidate(p, existing)) {
-      byDigit.set(k, p);
+      byDigit.set(scoped, p);
     }
   }
   return [...byDigit.values()];
@@ -1504,6 +1511,7 @@ function extractPhonesGlobalParenFormat(text: string): ExtractedPhone[] {
       phone_number: raw.trim(),
       phone_type: lineKind ?? "Possible phone",
       confidence,
+      subject_index: null,
       include_in_report: true,
     });
     if (out.length >= 80) {
@@ -1513,12 +1521,8 @@ function extractPhonesGlobalParenFormat(text: string): ExtractedPhone[] {
   return out;
 }
 
-function extractPhones(text: string): ExtractedPhone[] {
+function extractPhonesCore(text: string, maxPhones: number): ExtractedPhone[] {
   const lines = text.split("\n");
-  const subjectBlockCount = findSubjectBlockRanges(lines).length;
-  const maxPhones =
-    subjectBlockCount >= 2 ? MAX_PHONES_MULTI_SUBJECT : MAX_PHONES_RETURNED;
-
   const collected: ExtractedPhone[] = [...extractPhonesGlobalParenFormat(text)];
 
   for (const pattern of PHONE_SECTION_PATTERNS) {
@@ -1556,6 +1560,14 @@ function extractPhones(text: string): ExtractedPhone[] {
   }
 
   return finalizeExtractedPhones(collected, maxPhones);
+}
+
+function extractPhones(text: string): ExtractedPhone[] {
+  const lines = text.split("\n");
+  const subjectBlockCount = findSubjectBlockRanges(lines).length;
+  const maxPhones =
+    subjectBlockCount >= 2 ? MAX_PHONES_MULTI_SUBJECT : MAX_PHONES_RETURNED;
+  return extractPhonesCore(text, maxPhones);
 }
 
 // --- Vehicles (strict, unchanged intent) --------------------------------------
@@ -1602,6 +1614,7 @@ function extractYmmStrictLines(section: string): ExtractedVehicle[] {
       vin: null,
       plate: null,
       state: null,
+      subject_index: null,
       include_in_report: true,
     });
     if (out.length >= 15) {
@@ -1632,6 +1645,7 @@ function extractVinFromText(section: string): ExtractedVehicle[] {
       vin,
       plate: null,
       state: null,
+      subject_index: null,
       include_in_report: true,
     });
     if (out.length >= 20) {
@@ -1696,6 +1710,7 @@ function extractEmploymentGlobal(text: string): ExtractedEmployment[] {
           source_id: null,
           employer_name: employer.slice(0, 200),
           role_title: role,
+          subject_index: null,
           include_in_report: true,
         });
       }
@@ -1755,10 +1770,44 @@ function extractEmailsFromText(text: string): ExtractedEmail[] {
       source_id: null,
       email: raw.trim(),
       confidence,
+      subject_index: null,
       include_in_report: true,
     });
   }
   return out;
+}
+
+function tagAddresses(
+  rows: ExtractedAddress[],
+  subjectIndex: number
+): ExtractedAddress[] {
+  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
+}
+
+function tagPhones(rows: ExtractedPhone[], subjectIndex: number): ExtractedPhone[] {
+  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
+}
+
+function tagEmails(rows: ExtractedEmail[], subjectIndex: number): ExtractedEmail[] {
+  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
+}
+
+function tagVehicles(rows: ExtractedVehicle[], subjectIndex: number): ExtractedVehicle[] {
+  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
+}
+
+function tagAssociates(
+  rows: ExtractedAssociate[],
+  subjectIndex: number
+): ExtractedAssociate[] {
+  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
+}
+
+function tagEmployment(
+  rows: ExtractedEmployment[],
+  subjectIndex: number
+): ExtractedEmployment[] {
+  return rows.map((r) => ({ ...r, subject_index: subjectIndex }));
 }
 
 /**
@@ -1768,18 +1817,57 @@ function extractEmailsFromText(text: string): ExtractedEmail[] {
 export function parseTlo(rawText: string): ExtractedData {
   const text = normalizeExtractedText(rawText);
   const lines = text.split("\n");
+  const subjectBlocks = findSubjectBlockRanges(lines);
+  const multiSubject = subjectBlocks.length >= 2;
 
   const people = dedupePeople([
     ...extractPeopleFromSubjectBlocks(lines),
     ...extractPeopleFromSubjectColonPattern(text),
     ...extractPeopleGlobal(lines),
   ]);
-  const addresses = extractAddressesGlobal(text, lines);
-  const associates = extractAssociatesGlobal(lines, text);
-  const phones = extractPhones(text);
-  const emails = extractEmailsFromText(text);
-  const vehicles = extractVehicles(text);
-  const employment = extractEmploymentGlobal(text);
+
+  const phoneBudget =
+    subjectBlocks.length >= 2 ? MAX_PHONES_MULTI_SUBJECT : MAX_PHONES_RETURNED;
+
+  let addresses: ExtractedAddress[];
+  let associates: ExtractedAssociate[];
+  let phones: ExtractedPhone[];
+  let emails: ExtractedEmail[];
+  let vehicles: ExtractedVehicle[];
+  let employment: ExtractedEmployment[];
+
+  if (multiSubject) {
+    addresses = [];
+    associates = [];
+    phones = [];
+    emails = [];
+    vehicles = [];
+    employment = [];
+    for (let bi = 0; bi < subjectBlocks.length; bi++) {
+      const { start, end } = subjectBlocks[bi] ?? { start: 0, end: 0 };
+      const blockLines = lines.slice(start, end);
+      const blockText = blockLines.join("\n");
+      const si = bi + 1;
+      addresses.push(...tagAddresses(extractAddressesGlobal(blockText, blockLines), si));
+      associates.push(
+        ...tagAssociates(extractAssociatesGlobal(blockLines, blockText), si)
+      );
+      phones.push(...tagPhones(extractPhonesCore(blockText, phoneBudget), si));
+      emails.push(...tagEmails(extractEmailsFromText(blockText), si));
+      vehicles.push(...tagVehicles(extractVehicles(blockText), si));
+      employment.push(...tagEmployment(extractEmploymentGlobal(blockText), si));
+    }
+    addresses = dedupeAddresses(addresses);
+    associates = dedupeAssociates(associates);
+    phones = dedupePhonesPreferConfidence(phones);
+  } else {
+    addresses = tagAddresses(extractAddressesGlobal(text, lines), 1);
+    associates = tagAssociates(extractAssociatesGlobal(lines, text), 1);
+    phones = tagPhones(extractPhonesCore(text, phoneBudget), 1);
+    emails = tagEmails(extractEmailsFromText(text), 1);
+    vehicles = tagVehicles(extractVehicles(text), 1);
+    employment = tagEmployment(extractEmploymentGlobal(text), 1);
+  }
 
   return {
     people,

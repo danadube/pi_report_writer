@@ -166,6 +166,7 @@ export interface Database {
           date_range_text: string | null;
           date_from: string | null;
           date_to: string | null;
+          subject_index: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -180,6 +181,7 @@ export interface Database {
           date_range_text?: string | null;
           date_from?: string | null;
           date_to?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -194,6 +196,7 @@ export interface Database {
           date_range_text?: string | null;
           date_from?: string | null;
           date_to?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -206,6 +209,7 @@ export interface Database {
           phone_number: string;
           phone_type: string | null;
           confidence: number | null;
+          subject_index: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -215,6 +219,7 @@ export interface Database {
           phone_number?: string;
           phone_type?: string | null;
           confidence?: number | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -224,6 +229,7 @@ export interface Database {
           phone_number?: string;
           phone_type?: string | null;
           confidence?: number | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -235,6 +241,7 @@ export interface Database {
           source_id: string | null;
           email: string;
           confidence: number | null;
+          subject_index: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -243,6 +250,7 @@ export interface Database {
           source_id?: string | null;
           email?: string;
           confidence?: number | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -251,6 +259,7 @@ export interface Database {
           source_id?: string | null;
           email?: string;
           confidence?: number | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -266,6 +275,7 @@ export interface Database {
           vin: string | null;
           plate: string | null;
           state: string | null;
+          subject_index: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -278,6 +288,7 @@ export interface Database {
           vin?: string | null;
           plate?: string | null;
           state?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -290,6 +301,7 @@ export interface Database {
           vin?: string | null;
           plate?: string | null;
           state?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -301,6 +313,7 @@ export interface Database {
           source_id: string | null;
           name: string;
           relationship_label: string | null;
+          subject_index: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -309,6 +322,7 @@ export interface Database {
           source_id?: string | null;
           name?: string;
           relationship_label?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -317,6 +331,7 @@ export interface Database {
           source_id?: string | null;
           name?: string;
           relationship_label?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];
@@ -328,6 +343,7 @@ export interface Database {
           source_id: string | null;
           employer_name: string;
           role_title: string | null;
+          subject_index: number | null;
           include_in_report: boolean;
         };
         Insert: {
@@ -336,6 +352,7 @@ export interface Database {
           source_id?: string | null;
           employer_name?: string;
           role_title?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Update: {
@@ -344,6 +361,7 @@ export interface Database {
           source_id?: string | null;
           employer_name?: string;
           role_title?: string | null;
+          subject_index?: number | null;
           include_in_report?: boolean;
         };
         Relationships: [];

@@ -31,6 +31,8 @@ export interface ExtractedAddress {
   date_from: string | null;
   /** Parsed end date when extractable. */
   date_to: string | null;
+  /** TLO subject slot when known; null = unscoped / legacy. */
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -43,6 +45,7 @@ export interface ExtractedPhone {
   phone_type: string | null;
   /** Source-reported match confidence 0–100 when present. */
   confidence: number | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -53,6 +56,7 @@ export interface ExtractedEmail {
   email: string;
   /** Source-reported match confidence 0–100 when present. */
   confidence: number | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -66,6 +70,7 @@ export interface ExtractedVehicle {
   vin: string | null;
   plate: string | null;
   state: string | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -75,6 +80,7 @@ export interface ExtractedAssociate {
   source_id: string | null;
   name: string;
   relationship_label: string | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 
@@ -84,6 +90,7 @@ export interface ExtractedEmployment {
   source_id: string | null;
   employer_name: string;
   role_title: string | null;
+  subject_index: number | null;
   include_in_report: boolean;
 }
 

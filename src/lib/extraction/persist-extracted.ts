@@ -105,6 +105,7 @@ export async function replaceExtractedDataForSource(
       date_range_text: clip(a.date_range_text, MAX_TEXT_FIELD),
       date_from: clip(a.date_from, 32),
       date_to: clip(a.date_to, 32),
+      subject_index: a.subject_index ?? null,
       include_in_report: a.include_in_report,
     }));
     const { error } = await supabase.from("extracted_addresses").insert(rows);
@@ -124,6 +125,7 @@ export async function replaceExtractedDataForSource(
         p.confidence != null && p.confidence >= 0 && p.confidence <= 100
           ? Math.round(p.confidence)
           : null,
+      subject_index: p.subject_index ?? null,
       include_in_report: p.include_in_report,
     }));
     const { error } = await supabase.from("extracted_phones").insert(rows);
@@ -142,6 +144,7 @@ export async function replaceExtractedDataForSource(
         e.confidence != null && e.confidence >= 0 && e.confidence <= 100
           ? Math.round(e.confidence)
           : null,
+      subject_index: e.subject_index ?? null,
       include_in_report: e.include_in_report,
     }));
     const { error } = await supabase.from("extracted_emails").insert(rows);
@@ -161,6 +164,7 @@ export async function replaceExtractedDataForSource(
       vin: clip(v.vin, 32),
       plate: clip(v.plate, 32),
       state: clip(v.state, 16),
+      subject_index: v.subject_index ?? null,
       include_in_report: v.include_in_report,
     }));
     const { error } = await supabase.from("extracted_vehicles").insert(rows);
@@ -176,6 +180,7 @@ export async function replaceExtractedDataForSource(
       source_id: sourceId,
       name: clip(a.name, MAX_TEXT_FIELD) ?? "",
       relationship_label: clip(a.relationship_label, MAX_TEXT_FIELD),
+      subject_index: a.subject_index ?? null,
       include_in_report: a.include_in_report,
     }));
     const { error } = await supabase.from("extracted_associates").insert(rows);
@@ -191,6 +196,7 @@ export async function replaceExtractedDataForSource(
       source_id: sourceId,
       employer_name: clip(e.employer_name, MAX_TEXT_FIELD) ?? "",
       role_title: clip(e.role_title, MAX_TEXT_FIELD),
+      subject_index: e.subject_index ?? null,
       include_in_report: e.include_in_report,
     }));
     const { error } = await supabase.from("extracted_employment").insert(rows);

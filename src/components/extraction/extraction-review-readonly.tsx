@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import type { ExtractedData } from "@/types";
 import { ExtractionPhoneRows } from "@/components/extraction/extraction-phone-rows";
+import {
+  groupExtractedDataBySubject,
+  shouldShowSubjectHeaders,
+} from "@/lib/reports/group-extracted-by-subject";
 
 function InclusionHint({ included }: { included: boolean }) {
   if (included) {
@@ -34,49 +38,44 @@ function EmptyLine({ text }: { text: string }) {
   return <p className="text-sm text-[#6b7080] italic">{text}</p>;
 }
 
-export interface ExtractionReviewReadonlyProps {
-  data: ExtractedData;
-  /** When set, phone rows are interactive (include/exclude persisted via API). */
-  reportId?: string;
+function countStructured(d: ExtractedData): number {
+  return (
+    d.people.length +
+    d.addresses.length +
+    d.phones.length +
+    d.emails.length +
+    d.vehicles.length +
+    d.associates.length +
+    d.employment.length
+  );
 }
 
-/**
- * Extraction snapshot grouped by category. Phone include/exclude is interactive when `reportId` is passed.
- */
-export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewReadonlyProps) {
-  const hasAny =
-    data.people.length +
-      data.addresses.length +
-      data.phones.length +
-      data.emails.length +
-      data.vehicles.length +
-      data.associates.length +
-      data.employment.length >
-    0;
-
-  if (!hasAny) {
-    return (
-      <p className="text-sm text-[#8b90a0]">
-        No structured fields were detected or saved for this document. Raw text extraction may
-        still have succeeded—use Open on the source row to review the PDF, or rely on the character
-        count shown there.
-      </p>
-    );
-  }
-
+function SubjectCategoryGrid({
+  data,
+  reportId,
+  hidePersonSubjectChips,
+}: {
+  data: ExtractedData;
+  reportId?: string;
+  hidePersonSubjectChips: boolean;
+}) {
   return (
     <div className="space-y-3">
-      <CategoryBlock title="People">
+      <CategoryBlock title="Identity / People">
         {data.people.length === 0 ? (
           <EmptyLine text="None extracted." />
         ) : (
           <ul className="space-y-2">
             {data.people.map((p) => (
               <li key={p.id} className="text-sm">
-                <span className={p.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                <span
+                  className={
+                    p.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"
+                  }
+                >
                   {p.full_name}
                 </span>
-                {p.subject_index != null ? (
+                {!hidePersonSubjectChips && p.subject_index != null ? (
                   <span className="ml-2 text-[10px] uppercase tracking-wide text-[#6b7080] shrink-0">
                     {p.is_primary_subject ? "Primary" : `Subject ${p.subject_index}`}
                   </span>
@@ -109,7 +108,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
                 {a.label ? (
                   <p className="text-xs text-[#8b90a0] mb-0.5">{a.label}</p>
                 ) : null}
-                <span className={a.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                <span
+                  className={
+                    a.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"
+                  }
+                >
                   {a.street}, {a.city}, {a.state} {a.zip}
                 </span>
                 <InclusionHint included={a.include_in_report} />
@@ -135,7 +138,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
           <ul className="space-y-1.5">
             {data.phones.map((p) => (
               <li key={p.id} className="text-sm flex flex-wrap items-baseline gap-x-2">
-                <span className={p.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                <span
+                  className={
+                    p.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"
+                  }
+                >
                   {p.phone_number}
                 </span>
                 <InclusionHint included={p.include_in_report} />
@@ -158,7 +165,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
           <ul className="space-y-1.5">
             {data.emails.map((e) => (
               <li key={e.id} className="text-sm flex flex-wrap items-baseline gap-x-2">
-                <span className={e.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                <span
+                  className={
+                    e.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"
+                  }
+                >
                   {e.email}
                 </span>
                 <InclusionHint included={e.include_in_report} />
@@ -178,7 +189,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
           <ul className="space-y-1.5">
             {data.associates.map((a) => (
               <li key={a.id} className="text-sm">
-                <span className={a.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                <span
+                  className={
+                    a.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"
+                  }
+                >
                   {a.name}
                 </span>
                 <InclusionHint included={a.include_in_report} />
@@ -198,7 +213,11 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
           <ul className="space-y-2">
             {data.employment.map((e) => (
               <li key={e.id} className="text-sm">
-                <span className={e.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"}>
+                <span
+                  className={
+                    e.include_in_report ? "text-[#e8eaf0]" : "text-[#8b90a0] line-through"
+                  }
+                >
                   {e.employer_name}
                 </span>
                 <InclusionHint included={e.include_in_report} />
@@ -232,6 +251,60 @@ export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewRea
           </ul>
         )}
       </CategoryBlock>
+    </div>
+  );
+}
+
+export interface ExtractionReviewReadonlyProps {
+  data: ExtractedData;
+  /** When set, phone rows are interactive (include/exclude persisted via API). */
+  reportId?: string;
+}
+
+/**
+ * Extraction snapshot: grouped by subject when subject_index is present on rows; otherwise one block.
+ */
+export function ExtractionReviewReadonly({ data, reportId }: ExtractionReviewReadonlyProps) {
+  if (countStructured(data) === 0) {
+    return (
+      <p className="text-sm text-[#8b90a0]">
+        No structured fields were detected or saved for this document. Raw text extraction may
+        still have succeeded—use Open on the source row to review the PDF, or rely on the character
+        count shown there.
+      </p>
+    );
+  }
+
+  const showSubjectHeaders = shouldShowSubjectHeaders(data);
+  const sections = groupExtractedDataBySubject(data);
+
+  if (!showSubjectHeaders) {
+    return (
+      <SubjectCategoryGrid
+        data={data}
+        reportId={reportId}
+        hidePersonSubjectChips={false}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {sections.map((sec) => (
+        <div key={sec.subject_key} className="space-y-3">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-[#1e2130] pb-2">
+            <h4 className="text-sm font-semibold text-[#e8eaf0]">{sec.title}</h4>
+            <span className="text-[10px] font-medium uppercase tracking-wider text-[#6b7080]">
+              {sec.badge_label}
+            </span>
+          </div>
+          <SubjectCategoryGrid
+            data={sec.data}
+            reportId={reportId}
+            hidePersonSubjectChips
+          />
+        </div>
+      ))}
     </div>
   );
 }

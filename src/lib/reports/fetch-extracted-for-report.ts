@@ -195,6 +195,7 @@ export async function fetchExtractedGroupedBySource(
       date_range_text: row.date_range_text,
       date_from: row.date_from,
       date_to: row.date_to,
+      subject_index: row.subject_index ?? null,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).addresses.push(a);
@@ -211,6 +212,7 @@ export async function fetchExtractedGroupedBySource(
       phone_number: row.phone_number,
       phone_type: row.phone_type,
       confidence: row.confidence,
+      subject_index: row.subject_index ?? null,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).phones.push(p);
@@ -226,6 +228,7 @@ export async function fetchExtractedGroupedBySource(
       source_id: row.source_id,
       email: row.email,
       confidence: row.confidence,
+      subject_index: row.subject_index ?? null,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).emails.push(e);
@@ -245,6 +248,7 @@ export async function fetchExtractedGroupedBySource(
       vin: row.vin,
       plate: row.plate,
       state: row.state,
+      subject_index: row.subject_index ?? null,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).vehicles.push(v);
@@ -260,6 +264,7 @@ export async function fetchExtractedGroupedBySource(
       source_id: row.source_id,
       name: row.name,
       relationship_label: row.relationship_label,
+      subject_index: row.subject_index ?? null,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).associates.push(a);
@@ -275,6 +280,7 @@ export async function fetchExtractedGroupedBySource(
       source_id: row.source_id,
       employer_name: row.employer_name,
       role_title: row.role_title,
+      subject_index: row.subject_index ?? null,
       include_in_report: row.include_in_report,
     };
     ensureBucket(bySource, String(row.source_id)).employment.push(e);
