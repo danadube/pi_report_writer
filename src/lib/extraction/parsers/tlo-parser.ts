@@ -811,14 +811,98 @@ function extractAddressesGlobal(text: string, lines: string[]): ExtractedAddress
 
 // --- Associates: name + birth year + Age, or name + Age -----------------------
 
-/** Title-case names: "Ana Elsa Trinidad 1973 Age: 53" */
+/** Title-case names: "Ana Elsa Trinidad 1973 Age: 53" (hyphenated surnames ok) */
 const RELATIVE_TITLECASE_YEAR_AGE_RE =
-  /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s+\d{4}\s+Age:\s+\d+/i;
+  /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+(?:-[A-Za-z][a-z]*)?){1,3})\s+\d{4}\s+Age:\s+\d+/i;
+
+/**
+ * TLO relative rows: 2–6 name tokens (letters / hyphen / apostrophe), birth year, Age.
+ * Used after scrubbing "Possible Relatives" so names are not conflated with headers.
+ */
+const RELATIVE_ENTRY_RE =
+  /\b([A-Za-z][A-Za-z'\-.'’]*(?:\s+[A-Za-z][A-Za-z'\-.'’]*){1,5})\s+([12]\d{3})\s+Age:\s*(\d{1,3})\b/gi;
+
+const RELATIVES_SECTION_HEADER_RES: RegExp[] = [
+  /\bPossible\s+Relatives?\b/gi,
+  /\bKnown\s+Relatives?\b/gi,
+];
+
+const BAD_RELATIVE_NAME_STARTS = new Set([
+  "possible",
+  "known",
+  "relative",
+  "relatives",
+  "page",
+  "subject",
+  "address",
+  "phone",
+  "phones",
+  "vehicle",
+  "vehicles",
+  "employment",
+  "employer",
+  "employers",
+  "current",
+  "previous",
+  "mailing",
+  "residential",
+  "report",
+  "search",
+  "social",
+  "security",
+  "license",
+  "driver",
+]);
+
+const MONTH_WORDS = new Set([
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+]);
 
 const NAME_YEAR_AGE_RE =
   /^(.+?)\s+(\d{4})\s+Age\s*:\s*\d+/i;
 
 const NAME_AGE_ONLY_RE = /^(.+?)\s+Age\s*:\s*\d+/i;
+
+/** Flattened PDF often embeds "Possible Relatives" on the same line as the first row. */
+function scrubRelativesHeaderPhrases(s: string): string {
+  return s.replace(/\b(?:Possible|Known)\s+Relatives?\b/gi, " ");
+}
+
+function isPlausibleRelativeBirthYear(y: number): boolean {
+  return y >= 1900 && y <= 2090;
+}
+
+function isBadRelativeNameStart(firstWord: string): boolean {
+  const w = firstWord.toLowerCase().replace(/[^a-z]/g, "");
+  return w.length > 0 && BAD_RELATIVE_NAME_STARTS.has(w);
+}
+
+function isRelativeNameNoise(raw: string): boolean {
+  const t = raw.trim();
+  if (t.length < 4) {
+    return true;
+  }
+  const parts = t.split(/\s+/).filter(Boolean);
+  const first = parts[0] ?? "";
+  if (isBadRelativeNameStart(first)) {
+    return true;
+  }
+  if (MONTH_WORDS.has(first.toLowerCase())) {
+    return true;
+  }
+  return false;
+}
 
 function cleanAssociateName(raw: string): string | null {
   const n = normalizeName(raw);
@@ -838,89 +922,151 @@ function cleanAssociateName(raw: string): string | null {
   return n.slice(0, 200);
 }
 
-function extractAssociatesGlobal(lines: string[]): ExtractedAssociate[] {
+function dedupeAssociates(rows: ExtractedAssociate[]): ExtractedAssociate[] {
+  const seen = new Set<string>();
+  const out: ExtractedAssociate[] = [];
+  for (const row of rows) {
+    const key = row.name.replace(/\s+/g, " ").toUpperCase();
+    if (seen.has(key) || out.length >= 40) {
+      continue;
+    }
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function pushAssociateFromName(
+  nameRaw: string,
+  seen: Set<string>,
+  out: ExtractedAssociate[]
+): void {
+  const name = cleanAssociateName(nameRaw);
+  if (!name || isRelativeNameNoise(name)) {
+    return;
+  }
+  const key = name.toUpperCase();
+  if (seen.has(key) || out.length >= 40) {
+    return;
+  }
+  seen.add(key);
+  out.push({
+    id: id(),
+    report_id: PLACEHOLDER_REPORT,
+    source_id: null,
+    name,
+    relationship_label: null,
+    include_in_report: true,
+  });
+}
+
+/**
+ * All `Name … YYYY Age: NN` occurrences in text (flattened multi-entry lines ok).
+ */
+function collectRelativeEntriesFromText(src: string, seen: Set<string>, out: ExtractedAssociate[]): void {
+  const scrubbed = scrubRelativesHeaderPhrases(src);
+  const re = new RegExp(RELATIVE_ENTRY_RE.source, RELATIVE_ENTRY_RE.flags);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(scrubbed)) !== null) {
+    const year = parseInt(m[2] ?? "", 10);
+    if (!isPlausibleRelativeBirthYear(year)) {
+      continue;
+    }
+    const rawName = m[1]?.trim() ?? "";
+    if (isRelativeNameNoise(rawName)) {
+      continue;
+    }
+    pushAssociateFromName(rawName, seen, out);
+  }
+}
+
+function extractAssociatesFromRelativesSections(text: string): ExtractedAssociate[] {
   const out: ExtractedAssociate[] = [];
   const seen = new Set<string>();
 
-  for (const raw of lines) {
+  for (const headerRe of RELATIVES_SECTION_HEADER_RES) {
+    const r = new RegExp(headerRe.source, headerRe.flags);
+    let m: RegExpExecArray | null;
+    while ((m = r.exec(text)) !== null) {
+      const after = text.slice(m.index + m[0].length);
+      const chunk = takeSectionChunk(after, 12000);
+      if (chunk.length > 0) {
+        collectRelativeEntriesFromText(chunk, seen, out);
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Same-line and split-line fallbacks outside explicit section headers.
+ */
+function extractAssociatesFromLines(lines: string[]): ExtractedAssociate[] {
+  const out: ExtractedAssociate[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
     const line = raw.trim();
-    if (!line || line.length > 220) {
+    if (!line || line.length > 500) {
       continue;
     }
     if (isNoiseLine(line)) {
       continue;
     }
 
+    collectRelativeEntriesFromText(line, seen, out);
+    if (out.length >= 40) {
+      break;
+    }
+
     const relTc = line.match(RELATIVE_TITLECASE_YEAR_AGE_RE);
     if (relTc?.[1]) {
-      const name = cleanAssociateName(relTc[1]);
-      if (name) {
-        const key = name.toUpperCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          out.push({
-            id: id(),
-            report_id: PLACEHOLDER_REPORT,
-            source_id: null,
-            name,
-            relationship_label: null,
-            include_in_report: true,
-          });
-        }
-      }
+      pushAssociateFromName(relTc[1], seen, out);
       if (out.length >= 40) {
         break;
       }
       continue;
     }
 
-    let m = line.match(NAME_YEAR_AGE_RE);
+    const scrubbed = scrubRelativesHeaderPhrases(line);
+    let m = scrubbed.match(NAME_YEAR_AGE_RE);
     if (m?.[1]) {
-      const name = cleanAssociateName(m[1]);
-      if (name) {
-        const key = name.toUpperCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          out.push({
-            id: id(),
-            report_id: PLACEHOLDER_REPORT,
-            source_id: null,
-            name,
-            relationship_label: null,
-            include_in_report: true,
-          });
-        }
-      }
+      pushAssociateFromName(m[1], seen, out);
       if (out.length >= 40) {
         break;
       }
       continue;
     }
 
-    m = line.match(NAME_AGE_ONLY_RE);
+    m = scrubbed.match(NAME_AGE_ONLY_RE);
     if (m?.[1]) {
-      const name = cleanAssociateName(m[1]);
-      if (name) {
-        const key = name.toUpperCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          out.push({
-            id: id(),
-            report_id: PLACEHOLDER_REPORT,
-            source_id: null,
-            name,
-            relationship_label: null,
-            include_in_report: true,
-          });
-        }
+      pushAssociateFromName(m[1], seen, out);
+    }
+
+    const next = lines[i + 1]?.trim() ?? "";
+    const yearAge = next.match(/^([12]\d{3})\s+Age:\s*(\d{1,3})\s*$/i);
+    if (yearAge) {
+      const y = parseInt(yearAge[1] ?? "", 10);
+      if (isPlausibleRelativeBirthYear(y) && /^[A-Za-z]/.test(line) && !/\d{4}/.test(line)) {
+        pushAssociateFromName(line, seen, out);
       }
     }
+
     if (out.length >= 40) {
       break;
     }
   }
 
   return out;
+}
+
+function extractAssociatesGlobal(lines: string[], text: string): ExtractedAssociate[] {
+  return dedupeAssociates([
+    ...extractAssociatesFromRelativesSections(text),
+    ...extractAssociatesFromLines(lines),
+  ]);
 }
 
 // --- Phones (existing: section headers + subject-block fallback) --------------
@@ -942,17 +1088,51 @@ function phoneConfidenceRank(t: string | null): number {
   return 0;
 }
 
-/** Prefer rows with numeric confidence and TLO line type (Mobile / LandLine / VoIP). */
-function phoneRowRank(p: ExtractedPhone): number {
-  let score = 0;
-  if (p.confidence != null && p.confidence >= 0 && p.confidence <= 100) {
-    score += p.confidence;
+/** Mobile > VoIP > LandLine for sorting and dedupe ties. */
+function phoneTypePriorityRank(t: string | null): number {
+  if (!t) {
+    return 0;
   }
-  score += phoneConfidenceRank(p.phone_type) * 25;
-  if (/\b(Mobile|LandLine|VoIP)\b/i.test(p.phone_type ?? "")) {
-    score += 20;
+  if (/\bMobile\b/i.test(t)) {
+    return 3;
   }
-  return score;
+  if (/\bVoIP\b/i.test(t)) {
+    return 2;
+  }
+  if (/\bLandLine\b/i.test(t)) {
+    return 1;
+  }
+  return 0;
+}
+
+function hasTloLineTypeLabel(t: string | null): boolean {
+  return /\b(Mobile|LandLine|VoIP)\b/i.test(t ?? "");
+}
+
+/** Pick the richer duplicate: higher confidence, then type tier, then type + %, then legacy label. */
+function isBetterPhoneCandidate(a: ExtractedPhone, b: ExtractedPhone): boolean {
+  const ca = a.confidence;
+  const cb = b.confidence;
+  if (ca != null && cb != null && ca !== cb) {
+    return ca > cb;
+  }
+  if (ca != null && cb == null) {
+    return true;
+  }
+  if (ca == null && cb != null) {
+    return false;
+  }
+  const pa = phoneTypePriorityRank(a.phone_type);
+  const pb = phoneTypePriorityRank(b.phone_type);
+  if (pa !== pb) {
+    return pa > pb;
+  }
+  const aRich = hasTloLineTypeLabel(a.phone_type) && ca != null;
+  const bRich = hasTloLineTypeLabel(b.phone_type) && cb != null;
+  if (aRich !== bRich) {
+    return aRich;
+  }
+  return phoneConfidenceRank(a.phone_type) > phoneConfidenceRank(b.phone_type);
 }
 
 function parseTloPhoneLineSegments(afterPhone: string): {
@@ -1025,11 +1205,36 @@ function dedupePhonesPreferConfidence(phones: ExtractedPhone[]): ExtractedPhone[
       continue;
     }
     const existing = byDigit.get(k);
-    if (!existing || phoneRowRank(p) > phoneRowRank(existing)) {
+    if (!existing || isBetterPhoneCandidate(p, existing)) {
       byDigit.set(k, p);
     }
   }
   return [...byDigit.values()];
+}
+
+const MIN_PHONE_CONFIDENCE_PCT = 40;
+const MAX_PHONES_RETURNED = 10;
+
+/** Dedupe, then filter to confidence >= 40%, sort, cap at 10. */
+function finalizeExtractedPhones(phones: ExtractedPhone[]): ExtractedPhone[] {
+  const deduped = dedupePhonesPreferConfidence(phones);
+  const filtered = deduped.filter(
+    (p) => p.confidence != null && p.confidence >= MIN_PHONE_CONFIDENCE_PCT
+  );
+  filtered.sort((a, b) => {
+    const ca = a.confidence ?? 0;
+    const cb = b.confidence ?? 0;
+    if (cb !== ca) {
+      return cb - ca;
+    }
+    const pa = phoneTypePriorityRank(a.phone_type);
+    const pb = phoneTypePriorityRank(b.phone_type);
+    if (pb !== pa) {
+      return pb - pa;
+    }
+    return 0;
+  });
+  return filtered.slice(0, MAX_PHONES_RETURNED);
 }
 
 const PHONE_SECTION_PATTERNS: RegExp[] = [
@@ -1117,7 +1322,7 @@ function extractPhones(text: string): ExtractedPhone[] {
     }
   }
 
-  return dedupePhonesPreferConfidence(collected).slice(0, 80);
+  return finalizeExtractedPhones(collected);
 }
 
 // --- Vehicles (strict, unchanged intent) --------------------------------------
@@ -1283,7 +1488,7 @@ export function parseTlo(rawText: string): ExtractedData {
     ...extractPeopleGlobal(lines),
   ]);
   const addresses = extractAddressesGlobal(text, lines);
-  const associates = extractAssociatesGlobal(lines);
+  const associates = extractAssociatesGlobal(lines, text);
   const phones = extractPhones(text);
   const vehicles = extractVehicles(text);
   const employment = extractEmploymentGlobal(text);
