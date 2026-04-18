@@ -4,8 +4,10 @@ import { NextResponse } from "next/server";
 
 /**
  * POST /api/extraction
- * Body: { sourceId: string }
+ * Body: { sourceId: string, force?: boolean }
  * Re-runs PDF text extraction for a report_sources row (same logic as post-upload hook).
+ * Use `force: true` to reprocess a source that already has extraction_status "complete"
+ * (e.g. after parser updates). Without `force`, completed sources return "Already extracted".
  *
  * RLS: only sources belonging to the user's reports are visible/updatable.
  * We also verify `reports.created_by_user_id` so behavior stays correct if RLS is misconfigured.
@@ -28,10 +30,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const body = json as { sourceId?: unknown };
+  const body = json as { sourceId?: unknown; force?: unknown };
   if (typeof body.sourceId !== "string" || body.sourceId.length === 0) {
     return NextResponse.json({ error: "sourceId is required" }, { status: 400 });
   }
+  const force = body.force === true;
 
   const { data: src, error: fetchError } = await supabase
     .from("report_sources")
@@ -69,7 +72,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (src.extraction_status === "complete") {
+  if (src.extraction_status === "complete" && !force) {
     const { data: full, error: fullError } = await supabase
       .from("report_sources")
       .select("*")

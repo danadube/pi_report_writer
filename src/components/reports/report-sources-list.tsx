@@ -42,7 +42,7 @@ export function ReportSourcesList({
       const res = await fetch("/api/extraction", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceId: source.id }),
+        body: JSON.stringify({ sourceId: source.id, force: true }),
       });
       const json = (await res.json().catch(() => null)) as {
         error?: string;
