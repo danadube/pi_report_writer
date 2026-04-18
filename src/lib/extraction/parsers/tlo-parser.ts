@@ -21,14 +21,23 @@ const PHONE_RE =
 /** 17-char VIN (no I/O/Q). */
 const VIN_RE = /\b([A-HJ-NPR-Z0-9]{17})\b/gi;
 
-const SUBJECT_OF_RE = /^\s*Subject\s+\d+\s+of\s+\d+\s*$/i;
+/** Line starts with "Subject N of M" (TLO); allow trailing text on same line. */
+const SUBJECT_LINE_RE = /^\s*Subject\s+\d+\s+of\s+\d+\b/i;
 
 /** City, ST  ZIP */
 const CITY_ST_ZIP_RE =
   /^([A-Za-z][A-Za-z\s'.-]+),\s*([A-Z]{2})\s+(\d{5})(?:-(\d{4}))?\s*$/;
 
+/** City ST  ZIP (no comma before state) — common in PDF dumps */
+const CITY_ST_ZIP_NO_COMMA_RE =
+  /^([A-Za-z][A-Za-z\s'.-]+?)\s+([A-Z]{2})\s+(\d{5})(?:-(\d{4}))?\s*$/;
+
 const DATE_RANGE_HINT_RE =
   /\b(?:Present|CURRENT|\d{1,2}\/\d{4}|\d{4})\b.*(?:[-–—]|through|to)\b.*\b(?:Present|CURRENT|\d{1,2}\/\d{4}|\d{4})\b/i;
+
+/** Lines to skip when hunting the first subject name after "Subject N of M". */
+const SUBJECT_SKIP_LINE_RE =
+  /^(?:Report|Run|Search|Page|Case|File|Date|Time|Order|Reference|Transaction|Record)\b/i;
 
 function normalizePhoneDigits(s: string): string {
   return s.replace(/\D/g, "").slice(-10);
@@ -43,7 +52,7 @@ function lineLooksLikeSectionHeader(line: string): boolean {
   if (t.length < 4 || t.length > 90) {
     return false;
   }
-  if (SUBJECT_OF_RE.test(t)) {
+  if (SUBJECT_LINE_RE.test(t)) {
     return true;
   }
   if (
@@ -91,6 +100,20 @@ function isLikelyPersonNameLine(line: string): boolean {
   return false;
 }
 
+/** Explicit "Name:" style lines common in TLO subject headers */
+function extractNameFromLabelLine(line: string): string | null {
+  const m = line.match(
+    /^(?:Reported\s+)?(?:Primary\s+)?(?:Name|Subject\s+Name)\s*[:#]\s*(.+)$/i
+  );
+  if (m?.[1]) {
+    const n = normalizeName(m[1]);
+    if (n.length >= 2 && n.length <= 120 && !/^[\d\s./-]+$/.test(n)) {
+      return n;
+    }
+  }
+  return null;
+}
+
 function extractDobFromLine(line: string): string | null {
   const m = line.match(
     /(?:DOB|DATE\s+OF\s+BIRTH|BIRTH\s*DATE)\s*[:]?\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})/i
@@ -98,16 +121,14 @@ function extractDobFromLine(line: string): string | null {
   return m?.[1]?.trim() ?? null;
 }
 
-/** Subject N of M blocks: primary name + aliases from repeated / observed names. */
-function extractSubjectBlocks(text: string): ExtractedPerson[] {
-  const lines = text.split("\n");
+function findSubjectBlockRanges(lines: string[]): { start: number; end: number }[] {
   const blocks: { start: number; end: number }[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (SUBJECT_OF_RE.test(lines[i].trim())) {
+    if (SUBJECT_LINE_RE.test(lines[i].trim())) {
       const start = i;
       let end = lines.length;
       for (let j = i + 1; j < lines.length; j++) {
-        if (SUBJECT_OF_RE.test(lines[j].trim())) {
+        if (SUBJECT_LINE_RE.test(lines[j].trim())) {
           end = j;
           break;
         }
@@ -116,6 +137,13 @@ function extractSubjectBlocks(text: string): ExtractedPerson[] {
       i = end - 1;
     }
   }
+  return blocks;
+}
+
+/** Subject N of M blocks: one person per block with primary + aliases (not one person per name line). */
+function extractSubjectBlocks(text: string): ExtractedPerson[] {
+  const lines = text.split("\n");
+  const blocks = findSubjectBlockRanges(lines);
 
   if (blocks.length === 0) {
     return extractSubjectPersonLegacy(text);
@@ -157,6 +185,15 @@ function extractSubjectBlocks(text: string): ExtractedPerson[] {
       if (inlineDob) {
         dob = inlineDob;
       }
+      const labeledName = extractNameFromLabelLine(line);
+      if (labeledName) {
+        if (!primary) {
+          primary = labeledName.slice(0, 120);
+        } else {
+          pushAlias(labeledName);
+        }
+        continue;
+      }
       const obs = line.match(
         /^(?:Observed\s+Names?|Also\s+Known|AKA|Possible\s+Names?)\s*:?\s*(.+)$/i
       );
@@ -173,6 +210,9 @@ function extractSubjectBlocks(text: string): ExtractedPerson[] {
         continue;
       }
       if (/^(?:DOB|DATE\s+OF\s+BIRTH)\b/i.test(line)) {
+        continue;
+      }
+      if (SUBJECT_SKIP_LINE_RE.test(line)) {
         continue;
       }
       if (lineLooksLikeSectionHeader(line) && !isLikelyPersonNameLine(line)) {
@@ -271,10 +311,33 @@ function isStreetLine(s: string): boolean {
     return false;
   }
   return (
-    /^\d+\s+[A-Za-z0-9]/.test(t) ||
+    /^\d+\s+[A-Za-z0-9#]/.test(t) ||
     /^(?:P\.?O\.?\s*BOX|PO\s*BOX)\b/i.test(t) ||
     /^\d+\s+[A-Za-z].+#/.test(t)
   );
+}
+
+function parseCityStateZipLine(
+  line: string
+): { city: string; state: string; zip: string } | null {
+  const t = line.trim();
+  let m = t.match(CITY_ST_ZIP_RE);
+  if (m) {
+    return {
+      city: m[1].trim(),
+      state: m[2],
+      zip: m[3] + (m[4] ? `-${m[4]}` : ""),
+    };
+  }
+  m = t.match(CITY_ST_ZIP_NO_COMMA_RE);
+  if (m) {
+    return {
+      city: m[1].trim(),
+      state: m[2],
+      zip: m[3] + (m[4] ? `-${m[4]}` : ""),
+    };
+  }
+  return null;
 }
 
 function sliceAfterHeader(text: string, headerRe: RegExp): string | null {
@@ -290,7 +353,6 @@ function takeSectionChunk(chunk: string, maxLen = 20000): string {
   const lines = chunk.split("\n");
   const buf: string[] = [];
   for (const line of lines) {
-    const t = line.trim();
     if (
       buf.length > 0 &&
       lineLooksLikeSectionHeader(line) &&
@@ -323,16 +385,14 @@ function extractAddressesFromLines(
     if (isCurrentOtherPhonesAtAddressLine(cityLine)) {
       continue;
     }
-    const cityMatch = cityLine.match(CITY_ST_ZIP_RE);
-    if (!cityMatch) {
+    const parsed = parseCityStateZipLine(cityLine);
+    if (!parsed) {
       continue;
     }
     if (!isStreetLine(street)) {
       continue;
     }
-    const city = cityMatch[1].trim();
-    const state = cityMatch[2];
-    const zip = cityMatch[3] + (cityMatch[4] ? `-${cityMatch[4]}` : "");
+    const { city, state, zip } = parsed;
     const key = `${street}|${city}|${state}|${zip}`;
     if (seen.has(key) || out.length >= 50) {
       continue;
@@ -367,7 +427,7 @@ function extractAddressesFromLines(
   return out;
 }
 
-/** Address History (...) and DL-adjacent blocks; excludes "Current Other Phones at address" rows. */
+/** Address History (...) and DL / ID-adjacent blocks; excludes Current Other Phones metadata lines. */
 function extractAddresses(text: string): ExtractedAddress[] {
   const all: ExtractedAddress[] = [];
   const seen = new Set<string>();
@@ -393,30 +453,24 @@ function extractAddresses(text: string): ExtractedAddress[] {
     pushUnique(extractAddressesFromLines(lines, "Address history"));
   }
 
-  // Driver license / DL: following lines often include mailing address
   const dlIdx = text.search(
-    /(?:^|\n)\s*(?:DRIVER'?S?\s+LICENSE|D\s*\/\s*L|LICENSE\s+(?:NUMBER|#)|\bDL\s*#)/im
+    /(?:^|\n)\s*(?:DRIVER'?S?\s+LICENSE|D\s*\/\s*L|STATE\s+(?:ID|IDENTIFICATION)|\bID\s+(?:CARD|NUMBER)|IDENTIFICATION|LICENSE\s+(?:NUMBER|#)|\bDL\s*#)/im
   );
   if (dlIdx >= 0) {
-    const window = text.slice(dlIdx, dlIdx + 4500);
+    const window = text.slice(dlIdx, dlIdx + 5000);
     const lines = window.split("\n").filter((l) => !isCurrentOtherPhonesAtAddressLine(l));
-    pushUnique(extractAddressesFromLines(lines, "License / DL"));
+    pushUnique(extractAddressesFromLines(lines, "License / ID"));
   }
 
   return all.slice(0, 60);
 }
 
-/** Names under Possible Relatives until the next section header. */
-function extractPossibleRelatives(text: string): ExtractedAssociate[] {
-  const chunk = sliceAfterHeader(text, /(?:^|\n)\s*Possible\s+Relatives\b/i);
-  if (!chunk) {
-    return extractAssociatesLegacy(text);
-  }
-  const section = takeSectionChunk(chunk);
+function parseRelativeLinesIntoAssociates(
+  sectionLines: string[],
+  seen: Set<string>
+): ExtractedAssociate[] {
   const out: ExtractedAssociate[] = [];
-  const seen = new Set<string>();
-
-  for (const raw of section.split("\n")) {
+  for (const raw of sectionLines) {
     const line = raw.trim();
     if (!line || line.length > 200) {
       continue;
@@ -466,6 +520,39 @@ function extractPossibleRelatives(text: string): ExtractedAssociate[] {
   return out;
 }
 
+/**
+ * Prefer Possible Relatives inside each Subject … of … block (stays aligned with that subject).
+ * Falls back to first document-level Possible Relatives section when no subject blocks.
+ */
+function extractPossibleRelatives(text: string): ExtractedAssociate[] {
+  const lines = text.split("\n");
+  const blocks = findSubjectBlockRanges(lines);
+  const seen = new Set<string>();
+  const merged: ExtractedAssociate[] = [];
+
+  if (blocks.length > 0) {
+    for (const { start, end } of blocks) {
+      const chunk = lines.slice(start, end).join("\n");
+      const relChunk = sliceAfterHeader(chunk, /(?:^|\n)\s*Possible\s+Relatives\b/i);
+      if (!relChunk) {
+        continue;
+      }
+      const section = takeSectionChunk(relChunk);
+      merged.push(...parseRelativeLinesIntoAssociates(section.split("\n"), seen));
+    }
+    if (merged.length > 0) {
+      return merged;
+    }
+  }
+
+  const chunk = sliceAfterHeader(text, /(?:^|\n)\s*Possible\s+Relatives\b/i);
+  if (!chunk) {
+    return extractAssociatesLegacy(text);
+  }
+  const section = takeSectionChunk(chunk);
+  return parseRelativeLinesIntoAssociates(section.split("\n"), seen);
+}
+
 function extractAssociatesLegacy(text: string): ExtractedAssociate[] {
   const assocHeader =
     /(?:^|\n)\s*(?:ASSOCIATES?|RELATIVES?|POSSIBLE\s+ASSOCIATES?)\b/i;
@@ -474,39 +561,8 @@ function extractAssociatesLegacy(text: string): ExtractedAssociate[] {
     return [];
   }
   const section = takeSectionChunk(assocChunk);
-  const out: ExtractedAssociate[] = [];
-  for (const line of section.split("\n").map((l) => l.trim())) {
-    if (line.length < 3 || line.length > 200) {
-      continue;
-    }
-    if (/^(?:NAME|RELATION|PAGE|\d+\s*\/\s*\d+)/i.test(line)) {
-      continue;
-    }
-    const rel = line.match(/^(.+?)\s*[-–—]\s*(.+)$/);
-    if (rel) {
-      out.push({
-        id: id(),
-        report_id: PLACEHOLDER_REPORT,
-        source_id: null,
-        name: rel[1].trim().slice(0, 200),
-        relationship_label: rel[2].trim().slice(0, 120),
-        include_in_report: true,
-      });
-    } else if (isLikelyPersonNameLine(line)) {
-      out.push({
-        id: id(),
-        report_id: PLACEHOLDER_REPORT,
-        source_id: null,
-        name: line.slice(0, 200),
-        relationship_label: null,
-        include_in_report: true,
-      });
-    }
-    if (out.length >= 30) {
-      break;
-    }
-  }
-  return out;
+  const seen = new Set<string>();
+  return parseRelativeLinesIntoAssociates(section.split("\n").map((l) => l.trim()), seen);
 }
 
 function phoneConfidenceRank(t: string | null): number {
@@ -594,22 +650,8 @@ function extractPhones(text: string): ExtractedPhone[] {
     return dedupePhonesPreferConfidence(collected).slice(0, 80);
   }
 
-  // Narrow fallback: subject blocks only (reduces junk IDs, order numbers, etc.)
   const lines = text.split("\n");
-  const blocks: { start: number; end: number }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (SUBJECT_OF_RE.test(lines[i].trim())) {
-      let end = lines.length;
-      for (let j = i + 1; j < lines.length; j++) {
-        if (SUBJECT_OF_RE.test(lines[j].trim())) {
-          end = j;
-          break;
-        }
-      }
-      blocks.push({ start: i, end });
-      i = end - 1;
-    }
-  }
+  const blocks = findSubjectBlockRanges(lines);
 
   for (const { start, end } of blocks) {
     for (let i = start; i < end; i++) {
@@ -632,9 +674,12 @@ function extractPhones(text: string): ExtractedPhone[] {
 }
 
 const YMM_NOISE_RE =
-  /\b(?:report|statement|invoice|fee|total|account|page|section|copyright|annual)\b/i;
+  /\b(?:report|statement|invoice|fee|total|account|page|section|copyright|annual|balance|payment)\b/i;
 
-/** Whole-line year/make/model inside vehicle section only. */
+const VEHICLE_CONTEXT_RE =
+  /\b(?:plate|licen[sc]e|reg\.?|registration|title|vin|vehicle|auto|motor)\b/i;
+
+/** YMM only when the line also hints at vehicle context (reduces false positives). */
 function extractYmmStrictLines(section: string): ExtractedVehicle[] {
   const out: ExtractedVehicle[] = [];
   const lineRe =
@@ -648,6 +693,13 @@ function extractYmmStrictLines(section: string): ExtractedVehicle[] {
       continue;
     }
     if (!lineRe.test(line)) {
+      continue;
+    }
+    const shortYmmCandidate =
+      line.length <= 72 &&
+      line.split(/\s+/).length <= 8 &&
+      !YMM_NOISE_RE.test(line);
+    if (!VEHICLE_CONTEXT_RE.test(line) && !shortYmmCandidate) {
       continue;
     }
     const parts = line.split(/\s+/);
@@ -703,43 +755,9 @@ function extractVinFromText(section: string): ExtractedVehicle[] {
   return out;
 }
 
-/** VIN mentioned on same line as VIN / vehicle label (anywhere in doc). */
-function extractLabeledVins(text: string): ExtractedVehicle[] {
-  const out: ExtractedVehicle[] = [];
-  const seen = new Set<string>();
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!/\b(?:VIN|VEHICLE\s+ID|VEHICLE\s+IDENTIFICATION)\b/i.test(line)) {
-      continue;
-    }
-    let m: RegExpExecArray | null;
-    const re = new RegExp(VIN_RE);
-    while ((m = re.exec(line)) !== null) {
-      const vin = m[1].toUpperCase();
-      if (seen.has(vin)) {
-        continue;
-      }
-      seen.add(vin);
-      out.push({
-        id: id(),
-        report_id: PLACEHOLDER_REPORT,
-        source_id: null,
-        year: null,
-        make: null,
-        model: null,
-        vin,
-        plate: null,
-        state: null,
-        include_in_report: true,
-      });
-    }
-  }
-  return out;
-}
-
 function sliceVehicleSection(text: string): string | null {
   const m = text.match(
-    /(?:^|\n)\s*(?:Vehicle|Vehicles|Vehicle\s+Summary|Registered\s+Vehicles?|AUTO\s+RECORD)\b/i
+    /(?:^|\n)\s*(?:Vehicle|Vehicles|Vehicle\s+Summary|Registered\s+Vehicles?|Motor\s+Vehicles?|AUTO\s+RECORD)\b/i
   );
   if (!m || m.index === undefined) {
     return null;
@@ -747,7 +765,7 @@ function sliceVehicleSection(text: string): string | null {
   return takeSectionChunk(text.slice(m.index + m[0].length), 12000);
 }
 
-/** No whole-document YMM; VIN in vehicle section or explicitly labeled. */
+/** Strong signals only: VIN/YMM inside a vehicle section (no whole-document VIN scan). */
 function extractVehicles(text: string): ExtractedVehicle[] {
   const vehSection = sliceVehicleSection(text);
   const out: ExtractedVehicle[] = [];
@@ -755,7 +773,6 @@ function extractVehicles(text: string): ExtractedVehicle[] {
     out.push(...extractVinFromText(vehSection));
     out.push(...extractYmmStrictLines(vehSection));
   }
-  out.push(...extractLabeledVins(text));
 
   const seenVin = new Set<string>();
   const deduped: ExtractedVehicle[] = [];
