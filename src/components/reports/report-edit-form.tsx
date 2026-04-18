@@ -222,7 +222,7 @@ export function ReportEditForm({ initialReport }: ReportEditFormProps) {
             onUploaded={onSourceUploaded}
             onRefresh={() => router.refresh()}
           />
-          <ReportSourcesList sources={report.sources ?? []} />
+          <ReportSourcesList sources={report.sources ?? []} reportId={report.id} />
         </div>
       ) : (
         <div className="rounded-lg border border-[#2a2f42] bg-[#161922] px-4 py-3 text-sm text-[#8b90a0]">

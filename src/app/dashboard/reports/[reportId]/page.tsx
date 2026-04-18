@@ -99,7 +99,11 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
         <p className="text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
           Source documents
         </p>
-        <ReportSourcesList sources={sources} linkToExtractionReview />
+        <ReportSourcesList
+          sources={sources}
+          reportId={report.id}
+          linkToExtractionReview
+        />
       </div>
 
       <ReportExtractionReview sources={sources} reportId={report.id} />
