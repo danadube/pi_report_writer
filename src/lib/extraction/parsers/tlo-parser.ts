@@ -45,9 +45,6 @@ const CITY_ST_ZIP_RE =
 const CITY_ST_ZIP_NO_COMMA_RE =
   /^([A-Za-z][A-Za-z\s'.-]+?)\s+([A-Z]{2})\s+(\d{5})(?:-(\d{4}))?\s*$/;
 
-const DATE_RANGE_HINT_RE =
-  /\b(?:Present|CURRENT|\d{1,2}\/\d{4}|\d{4})\b.*(?:[-–—]|through|to)\b.*\b(?:Present|CURRENT|\d{1,2}\/\d{4}|\d{4})\b/i;
-
 function normalizePhoneDigits(s: string): string {
   return s.replace(/\D/g, "").slice(-10);
 }
@@ -595,9 +592,15 @@ function isStreetStartsWithNumberOrPoBox(street: string): boolean {
   return /^\d{1,6}\s/.test(t);
 }
 
-/** e.g. (04/03/2025 to 03/12/2026) on same line as address */
-const ADDRESS_LINE_DATE_RANGE_PAREN_RE =
-  /\((\d{1,2}\/\d{1,2}\/\d{4})\s+to\s+(\d{1,2}\/\d{1,2}\/\d{4})\)/i;
+/**
+ * Strict TLO range: (MM/DD/YYYY to MM/DD/YYYY) or same without outer parens.
+ * Per-address only — do not reuse dates from other lines.
+ */
+const ADDRESS_LINE_DATE_RANGE_STRICT_PAREN_RE =
+  /\((\d{2}\/\d{2}\/\d{4})\s+to\s+(\d{2}\/\d{2}\/\d{4})\)/i;
+
+const ADDRESS_LINE_DATE_RANGE_STRICT_PLAIN_RE =
+  /\b(\d{2}\/\d{2}\/\d{4})\s+to\s+(\d{2}\/\d{2}\/\d{4})\b/i;
 
 function parseAddressLineDateRange(fullLine: string): {
   date_from: string | null;
@@ -608,18 +611,16 @@ function parseAddressLineDateRange(fullLine: string): {
   if (!t) {
     return { date_from: null, date_to: null, date_range_text: null };
   }
-  let m = t.match(ADDRESS_LINE_DATE_RANGE_PAREN_RE);
-  if (m?.[1] && m[2]) {
+  let m = t.match(ADDRESS_LINE_DATE_RANGE_STRICT_PAREN_RE);
+  if (m?.[1] && m?.[2]) {
     return {
       date_from: m[1],
       date_to: m[2],
       date_range_text: `${m[1]} to ${m[2]}`,
     };
   }
-  m = t.match(
-    /(\d{1,2}\/\d{1,2}\/\d{4})\s+to\s+(\d{1,2}\/\d{1,2}\/\d{4})/i
-  );
-  if (m?.[1] && m[2]) {
+  m = t.match(ADDRESS_LINE_DATE_RANGE_STRICT_PLAIN_RE);
+  if (m?.[1] && m?.[2]) {
     return {
       date_from: m[1],
       date_to: m[2],
@@ -627,6 +628,42 @@ function parseAddressLineDateRange(fullLine: string): {
     };
   }
   return { date_from: null, date_to: null, date_range_text: null };
+}
+
+/** Date range for this address block only (street line(s) + city/state/zip line), raw text. */
+function parseAddressDateRangeFromBlockLines(
+  lines: string[],
+  streetIdx: number,
+  cityLineIdx: number
+): { date_from: string | null; date_to: string | null; date_range_text: string | null } {
+  const parts: string[] = [];
+  for (let k = streetIdx; k <= cityLineIdx; k++) {
+    parts.push(lines[k]?.trim() ?? "");
+  }
+  return parseAddressLineDateRange(parts.join(" "));
+}
+
+/**
+ * Previous line may carry a date only if it is not itself another address row
+ * (avoids reusing the prior row’s city line dates).
+ */
+function lineLooksLikeCityStateZipRow(line: string): boolean {
+  return parseCityStateZipLine(line.trim()) != null;
+}
+
+function maybeDateRangeFromPreviousLineOnly(prevLine: string): {
+  date_from: string | null;
+  date_to: string | null;
+  date_range_text: string | null;
+} {
+  const t = prevLine.trim();
+  if (!t) {
+    return { date_from: null, date_to: null, date_range_text: null };
+  }
+  if (lineLooksLikeCityStateZipRow(t) || isStreetLine(t)) {
+    return { date_from: null, date_to: null, date_range_text: null };
+  }
+  return parseAddressLineDateRange(t);
 }
 
 /** Embedded or standalone: number + street fragment, city, state zip */
@@ -744,23 +781,21 @@ function extractAddressesFromLines(
     seen.add(key);
 
     let label = defaultLabel;
-    const prev = lines[i - 1]?.trim() ?? "";
-    if (prev && /^(?:Mailing|Physical|Current|Previous|Former)\b/i.test(prev)) {
-      label = prev.slice(0, 120);
+    const labelPrev = lines[i - 1]?.trim() ?? "";
+    if (labelPrev && /^(?:Mailing|Physical|Current|Previous|Former)\b/i.test(labelPrev)) {
+      label = labelPrev.slice(0, 120);
     }
 
-    const drLine = parseAddressLineDateRange(`${street} ${cityLine}`);
+    const drLine = parseAddressDateRangeFromBlockLines(lines, i, nextIdx);
     let date_from = drLine.date_from;
     let date_to = drLine.date_to;
     let date_range_text = drLine.date_range_text;
-    if (!date_from && prev) {
-      const drPrev = parseAddressLineDateRange(prev);
+    if (!date_from) {
+      const drPrev = maybeDateRangeFromPreviousLineOnly(lines[i - 1]?.trim() ?? "");
       if (drPrev.date_from) {
         date_from = drPrev.date_from;
         date_to = drPrev.date_to;
-        date_range_text = drPrev.date_range_text ?? prev.slice(0, 200);
-      } else if (DATE_RANGE_HINT_RE.test(prev) && !isStreetLine(prev)) {
-        date_range_text = prev.slice(0, 200);
+        date_range_text = drPrev.date_range_text;
       }
     }
 
