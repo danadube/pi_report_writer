@@ -6,6 +6,10 @@ import {
   buildStoragePublicObjectUrl,
   validateSupabaseUrlForStorage,
 } from "@/lib/storage/report-files";
+import {
+  fetchExtractedGroupedBySource,
+  mergeSourcesWithExtracted,
+} from "@/lib/reports/fetch-extracted-for-report";
 import { NextResponse } from "next/server";
 import { SourceDocumentType, type ReportSource } from "@/types";
 
@@ -183,7 +187,7 @@ export async function POST(request: Request) {
 
   const row = reloadFailed ? sourceRow : sourceAfterExtraction;
 
-  const source: ReportSource = {
+  let source: ReportSource = {
     id: row.id,
     report_id: row.report_id,
     source_type: row.source_type as ReportSource["source_type"],
@@ -194,6 +198,14 @@ export async function POST(request: Request) {
     extraction_error: row.extraction_error,
     created_at: row.created_at,
   };
+
+  const extractedBundle = await fetchExtractedGroupedBySource(supabase, reportId);
+  if (extractedBundle.ok) {
+    const [merged] = mergeSourcesWithExtracted([source], extractedBundle.bySource);
+    if (merged) {
+      source = merged;
+    }
+  }
 
   return NextResponse.json(
     {

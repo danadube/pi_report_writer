@@ -36,14 +36,36 @@ export function countStructuredFields(data: ExtractedData): number {
   );
 }
 
+/**
+ * Stable fingerprint for syncing client report state when server-side sources / extraction change.
+ */
+export function sourcesStructuredSyncKey(sources: ReportSource[] | undefined): string {
+  if (!sources?.length) {
+    return "";
+  }
+  return [...sources]
+    .map((s) => {
+      const ed = s.extracted_data ?? emptyExtractedData();
+      return `${s.id}:${s.extraction_status}:${countStructuredFields(ed)}`;
+    })
+    .sort()
+    .join("|");
+}
+
+/** Normalize so report_sources.id and extracted_*.source_id always match Map keys. */
+export function normalizeSourceIdForMerge(id: string): string {
+  return id.trim().toLowerCase();
+}
+
 function ensureBucket(
   map: Map<string, ExtractedData>,
   sourceId: string
 ): ExtractedData {
-  let d = map.get(sourceId);
+  const key = normalizeSourceIdForMerge(sourceId);
+  let d = map.get(key);
   if (!d) {
     d = emptyExtractedData();
-    map.set(sourceId, d);
+    map.set(key, d);
   }
   return d;
 }
@@ -88,7 +110,7 @@ export async function fetchExtractedGroupedBySource(
   const bySource = new Map<string, ExtractedData>();
 
   for (const row of peopleRows ?? []) {
-    if (!row.source_id) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
       continue;
     }
     const p: ExtractedPerson = {
@@ -103,11 +125,11 @@ export async function fetchExtractedGroupedBySource(
       aliases: row.aliases ?? [],
       include_in_report: row.include_in_report,
     };
-    ensureBucket(bySource, row.source_id).people.push(p);
+    ensureBucket(bySource, String(row.source_id)).people.push(p);
   }
 
   for (const row of addrRows ?? []) {
-    if (!row.source_id) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
       continue;
     }
     const a: ExtractedAddress = {
@@ -124,11 +146,11 @@ export async function fetchExtractedGroupedBySource(
       date_to: row.date_to,
       include_in_report: row.include_in_report,
     };
-    ensureBucket(bySource, row.source_id).addresses.push(a);
+    ensureBucket(bySource, String(row.source_id)).addresses.push(a);
   }
 
   for (const row of phoneRows ?? []) {
-    if (!row.source_id) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
       continue;
     }
     const p: ExtractedPhone = {
@@ -140,11 +162,11 @@ export async function fetchExtractedGroupedBySource(
       confidence: row.confidence,
       include_in_report: row.include_in_report,
     };
-    ensureBucket(bySource, row.source_id).phones.push(p);
+    ensureBucket(bySource, String(row.source_id)).phones.push(p);
   }
 
   for (const row of vehRows ?? []) {
-    if (!row.source_id) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
       continue;
     }
     const v: ExtractedVehicle = {
@@ -159,11 +181,11 @@ export async function fetchExtractedGroupedBySource(
       state: row.state,
       include_in_report: row.include_in_report,
     };
-    ensureBucket(bySource, row.source_id).vehicles.push(v);
+    ensureBucket(bySource, String(row.source_id)).vehicles.push(v);
   }
 
   for (const row of assocRows ?? []) {
-    if (!row.source_id) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
       continue;
     }
     const a: ExtractedAssociate = {
@@ -174,11 +196,11 @@ export async function fetchExtractedGroupedBySource(
       relationship_label: row.relationship_label,
       include_in_report: row.include_in_report,
     };
-    ensureBucket(bySource, row.source_id).associates.push(a);
+    ensureBucket(bySource, String(row.source_id)).associates.push(a);
   }
 
   for (const row of empRows ?? []) {
-    if (!row.source_id) {
+    if (row.source_id == null || String(row.source_id).trim() === "") {
       continue;
     }
     const e: ExtractedEmployment = {
@@ -189,7 +211,7 @@ export async function fetchExtractedGroupedBySource(
       role_title: row.role_title,
       include_in_report: row.include_in_report,
     };
-    ensureBucket(bySource, row.source_id).employment.push(e);
+    ensureBucket(bySource, String(row.source_id)).employment.push(e);
   }
 
   return { ok: true, bySource };
@@ -201,6 +223,7 @@ export function mergeSourcesWithExtracted(
 ): ReportSource[] {
   return sources.map((s) => ({
     ...s,
-    extracted_data: bySource.get(s.id) ?? emptyExtractedData(),
+    extracted_data:
+      bySource.get(normalizeSourceIdForMerge(s.id)) ?? emptyExtractedData(),
   }));
 }

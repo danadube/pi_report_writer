@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { sourcesStructuredSyncKey } from "@/lib/reports/fetch-extracted-for-report";
 import { DocumentUpload } from "@/components/extraction/document-upload";
 import { ReportSourcesList } from "@/components/reports/report-sources-list";
 import { REPORT_TEMPLATE_CONFIGS } from "@/lib/config/report-templates";
@@ -20,6 +21,16 @@ interface ReportEditFormProps {
 export function ReportEditForm({ initialReport }: ReportEditFormProps) {
   const router = useRouter();
   const [report, setReport] = useState<Report>(initialReport);
+  const extractionSyncKey = sourcesStructuredSyncKey(initialReport.sources);
+
+  useEffect(() => {
+    setReport((prev) => ({
+      ...prev,
+      sources: initialReport.sources ?? [],
+    }));
+    // Only when extraction status / structured counts change — avoids resetting on unrelated prop churn.
+  }, [extractionSyncKey]);
+
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(
     null
