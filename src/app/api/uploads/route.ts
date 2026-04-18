@@ -201,7 +201,11 @@ export async function POST(request: Request) {
 
   const extractedBundle = await fetchExtractedGroupedBySource(supabase, reportId);
   if (extractedBundle.ok) {
-    const [merged] = mergeSourcesWithExtracted([source], extractedBundle.bySource);
+    const [merged] = mergeSourcesWithExtracted(
+      [source],
+      extractedBundle.bySource,
+      reportId
+    );
     if (merged) {
       source = merged;
     }

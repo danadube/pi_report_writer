@@ -73,6 +73,8 @@ function ensureBucket(
   return d;
 }
 
+const MERGE_DEBUG = "[report-merge-debug]";
+
 /**
  * Loads all extracted_* rows for a report and groups them by source_id.
  */
@@ -82,38 +84,79 @@ export async function fetchExtractedGroupedBySource(
 ): Promise<
   { ok: true; bySource: Map<string, ExtractedData> } | { ok: false; message: string }
 > {
-  const [
-    { data: peopleRows, error: ePeople },
-    { data: addrRows, error: eAddr },
-    { data: phoneRows, error: ePhone },
-    { data: emailRows, error: eEmail },
-    { data: vehRows, error: eVeh },
-    { data: assocRows, error: eAssoc },
-    { data: empRows, error: eEmp },
-  ] = await Promise.all([
-    supabase.from("extracted_people").select("*").eq("report_id", reportId),
-    supabase.from("extracted_addresses").select("*").eq("report_id", reportId),
-    supabase.from("extracted_phones").select("*").eq("report_id", reportId),
-    supabase.from("extracted_emails").select("*").eq("report_id", reportId),
-    supabase.from("extracted_vehicles").select("*").eq("report_id", reportId),
-    supabase.from("extracted_associates").select("*").eq("report_id", reportId),
-    supabase.from("extracted_employment").select("*").eq("report_id", reportId),
-  ]);
+  console.error(MERGE_DEBUG, "fetchExtractedGroupedBySource: before parallel extracted_* queries", {
+    reportId,
+  });
 
-  const err =
-    ePeople ??
-    eAddr ??
-    ePhone ??
-    eEmail ??
-    eVeh ??
-    eAssoc ??
-    eEmp ??
-    null;
-  if (err) {
-    return { ok: false, message: err.message };
-  }
+  try {
+    const [
+      { data: peopleRows, error: ePeople },
+      { data: addrRows, error: eAddr },
+      { data: phoneRows, error: ePhone },
+      { data: emailRows, error: eEmail },
+      { data: vehRows, error: eVeh },
+      { data: assocRows, error: eAssoc },
+      { data: empRows, error: eEmp },
+    ] = await Promise.all([
+      supabase.from("extracted_people").select("*").eq("report_id", reportId),
+      supabase.from("extracted_addresses").select("*").eq("report_id", reportId),
+      supabase.from("extracted_phones").select("*").eq("report_id", reportId),
+      supabase.from("extracted_emails").select("*").eq("report_id", reportId),
+      supabase.from("extracted_vehicles").select("*").eq("report_id", reportId),
+      supabase.from("extracted_associates").select("*").eq("report_id", reportId),
+      supabase.from("extracted_employment").select("*").eq("report_id", reportId),
+    ]);
 
-  const bySource = new Map<string, ExtractedData>();
+    const tableErrors: { table: string; message: string; code?: string }[] = [];
+    const logTableFailure = (table: string, err: { message: string; code?: string } | null) => {
+      if (err) {
+        console.error(MERGE_DEBUG, `extracted_* query failed: ${table}`, {
+          reportId,
+          message: err.message,
+          code: err.code,
+        });
+        tableErrors.push({ table, message: err.message, code: err.code });
+      }
+    };
+
+    logTableFailure("extracted_people", ePeople);
+    logTableFailure("extracted_addresses", eAddr);
+    logTableFailure("extracted_phones", ePhone);
+    logTableFailure("extracted_emails", eEmail);
+    logTableFailure("extracted_vehicles", eVeh);
+    logTableFailure("extracted_associates", eAssoc);
+    logTableFailure("extracted_employment", eEmp);
+
+    const err =
+      ePeople ??
+      eAddr ??
+      ePhone ??
+      eEmail ??
+      eVeh ??
+      eAssoc ??
+      eEmp ??
+      null;
+    if (err) {
+      console.error(MERGE_DEBUG, "fetchExtractedGroupedBySource: aborting after query errors", {
+        reportId,
+        failedTables: tableErrors.map((t) => t.table),
+        firstMessage: err.message,
+      });
+      return { ok: false, message: err.message };
+    }
+
+    console.error(MERGE_DEBUG, "fetchExtractedGroupedBySource: row counts", {
+      reportId,
+      extracted_people: peopleRows?.length ?? 0,
+      extracted_addresses: addrRows?.length ?? 0,
+      extracted_phones: phoneRows?.length ?? 0,
+      extracted_emails: emailRows?.length ?? 0,
+      extracted_vehicles: vehRows?.length ?? 0,
+      extracted_associates: assocRows?.length ?? 0,
+      extracted_employment: empRows?.length ?? 0,
+    });
+
+    const bySource = new Map<string, ExtractedData>();
 
   for (const row of peopleRows ?? []) {
     if (row.source_id == null || String(row.source_id).trim() === "") {
@@ -237,16 +280,59 @@ export async function fetchExtractedGroupedBySource(
     ensureBucket(bySource, String(row.source_id)).employment.push(e);
   }
 
-  return { ok: true, bySource };
+    console.error(MERGE_DEBUG, "fetchExtractedGroupedBySource: merge buckets built", {
+      reportId,
+      bucketCount: bySource.size,
+      bucketSourceIds: [...bySource.keys()],
+    });
+
+    return { ok: true, bySource };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error(MERGE_DEBUG, "fetchExtractedGroupedBySource: unexpected throw", {
+      reportId,
+      message: msg,
+      stack,
+    });
+    return { ok: false, message: msg };
+  }
 }
 
 export function mergeSourcesWithExtracted(
   sources: ReportSource[],
-  bySource: Map<string, ExtractedData>
+  bySource: Map<string, ExtractedData>,
+  debugReportId?: string
 ): ReportSource[] {
-  return sources.map((s) => ({
-    ...s,
-    extracted_data:
-      bySource.get(normalizeSourceIdForMerge(s.id)) ?? emptyExtractedData(),
-  }));
+  if (debugReportId) {
+    console.error(MERGE_DEBUG, "mergeSourcesWithExtracted: start", {
+      reportId: debugReportId,
+      sourceIds: sources.map((s) => s.id),
+      mapSize: bySource.size,
+      mapKeys: [...bySource.keys()],
+    });
+  }
+  try {
+    const out = sources.map((s) => ({
+      ...s,
+      extracted_data:
+        bySource.get(normalizeSourceIdForMerge(s.id)) ?? emptyExtractedData(),
+    }));
+    if (debugReportId) {
+      console.error(MERGE_DEBUG, "mergeSourcesWithExtracted: done", {
+        reportId: debugReportId,
+        mergedSources: out.length,
+      });
+    }
+    return out;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error(MERGE_DEBUG, "mergeSourcesWithExtracted: threw", {
+      reportId: debugReportId,
+      message: msg,
+      stack,
+    });
+    throw e;
+  }
 }
