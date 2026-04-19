@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { SummaryDraftPreview } from "@/components/reports/summary-draft-preview";
 import type { SummaryPrepPayload } from "@/types/summary-candidates";
 
 interface SummarySelectionReviewProps {
@@ -75,7 +76,7 @@ export function SummarySelectionReview({ reportId }: SummarySelectionReviewProps
     for (const b of payload.subject_blocks) {
       for (const s of b.sections) {
         for (const c of s.candidates) {
-          if (selected[c.id]) n += 1;
+          if (selected[c.id] === true) n += 1;
         }
       }
     }
@@ -127,8 +128,8 @@ export function SummarySelectionReview({ reportId }: SummarySelectionReviewProps
           Summary selection
         </h2>
         <p className="text-sm text-[#8b90a0] mt-1">
-          Draft selection for a future generated summary. Checked lines match the default ranking;
-          adjust before final prose generation (not built in this pass).
+          Choose lines to include; the draft summary below updates immediately. Defaults follow
+          ranking rules from extraction — adjust as needed.
         </p>
         <p className="text-xs text-[#6b7080] mt-2">
           {selectedCount} of {totalCandidates} lines selected
@@ -211,6 +212,8 @@ export function SummarySelectionReview({ reportId }: SummarySelectionReviewProps
           </article>
         ))}
       </div>
+
+      <SummaryDraftPreview payload={payload} selected={selected} />
     </section>
   );
 }
