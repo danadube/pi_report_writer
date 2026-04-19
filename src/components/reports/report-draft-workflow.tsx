@@ -775,6 +775,11 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
                         typeof e.block.displayPayload.display_text === "string"
                           ? e.block.displayPayload.display_text
                           : "";
+                      const periodMeta =
+                        e.block.entityKind === "address" &&
+                        typeof e.block.displayPayload.address_date_metadata === "string"
+                          ? e.block.displayPayload.address_date_metadata.trim()
+                          : "";
                       return (
                         <li
                           key={e.block.draftItemId}
@@ -787,6 +792,11 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
                           <p className="text-sm whitespace-pre-wrap wrap-break-word" style={{ color: cr.chalk }}>
                             {text}
                           </p>
+                          {periodMeta ? (
+                            <p className="text-xs mt-1 whitespace-pre-wrap" style={{ color: cr.slate }}>
+                              {periodMeta}
+                            </p>
+                          ) : null}
                           <p className="text-xs mt-1" style={{ color: cr.slate }}>
                             State:{" "}
                             <span style={{ color: cr.gold }}>{e.block.state}</span>

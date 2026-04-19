@@ -60,7 +60,21 @@ export function validateCandidateSeedDisplayPayload(
   ) {
     return { ok: false, message: "display_payload.ranking_score_hint must be a finite number or omitted" };
   }
-  const allowed = new Set(["section_key", "display_text", "label", "ranking_score_hint"]);
+  if (o.address_date_metadata != null) {
+    if (typeof o.address_date_metadata !== "string" || o.address_date_metadata.length > 500) {
+      return {
+        ok: false,
+        message: "display_payload.address_date_metadata must be a short string or omitted",
+      };
+    }
+  }
+  const allowed = new Set([
+    "section_key",
+    "display_text",
+    "label",
+    "ranking_score_hint",
+    "address_date_metadata",
+  ]);
   for (const k of Object.keys(o)) {
     if (!allowed.has(k)) {
       return { ok: false, message: `display_payload: unexpected field "${k}" for candidate seed` };

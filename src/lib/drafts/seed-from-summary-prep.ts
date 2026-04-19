@@ -78,6 +78,10 @@ function buildDisplayPayload(c: SummaryCandidate): Record<string, unknown> {
   if (c.ranking_score != null) {
     payload.ranking_score_hint = c.ranking_score;
   }
+  const meta = c.address_date_metadata?.trim();
+  if (meta) {
+    payload.address_date_metadata = meta;
+  }
   return payload;
 }
 

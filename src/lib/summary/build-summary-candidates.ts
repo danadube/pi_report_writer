@@ -1,5 +1,6 @@
 import { groupExtractedDataBySubject } from "@/lib/reports/group-extracted-by-subject";
 import { mergeExtractedDataFromSources } from "@/lib/summary/merge-extracted-from-sources";
+import { formatAddressCoreLine, formatAddressPeriodLabel } from "@/lib/summary/address-format";
 import type {
   ExtractedAddress,
   ExtractedAssociate,
@@ -489,12 +490,13 @@ function buildSectionsForSubject(
   const { current, prior } = partitionCurrentPrior(addressesPrepared);
 
   if (current) {
-    const line = formatAddressLine(current);
+    const periodMeta = formatAddressPeriodLabel(current);
     push({
       id: cid(SummarySectionId.CURRENT_ADDRESS, "address", current.id),
       section: SummarySectionId.CURRENT_ADDRESS,
       label: current.label?.trim() || "Current",
-      display_text: line,
+      display_text: formatAddressCoreLine(current),
+      address_date_metadata: periodMeta ?? undefined,
       source_reference: refFor(current.source_id, fileMap),
       selected_by_default: true,
       subject_index: current.subject_index ?? subjectKey,
@@ -507,13 +509,14 @@ function buildSectionsForSubject(
   const priorSorted = [...prior].sort((a, b) => scoreAddressRank(b) - scoreAddressRank(a));
   for (let i = 0; i < priorSorted.length; i++) {
     const a = priorSorted[i]!;
-    const line = formatAddressLine(a);
+    const periodMeta = formatAddressPeriodLabel(a);
     const rank = scoreAddressRank(a);
     push({
       id: cid(SummarySectionId.PRIOR_ADDRESSES, "address", a.id),
       section: SummarySectionId.PRIOR_ADDRESSES,
       label: a.label?.trim() || "Prior",
-      display_text: line,
+      display_text: formatAddressCoreLine(a),
+      address_date_metadata: periodMeta ?? undefined,
       source_reference: refFor(a.source_id, fileMap),
       selected_by_default: i < MAX_PRIOR_ADDRESSES_DEFAULT,
       subject_index: a.subject_index ?? subjectKey,
@@ -657,12 +660,6 @@ function buildSectionsForSubject(
     title,
     sections,
   };
-}
-
-function formatAddressLine(a: ExtractedAddress): string {
-  const core = `${a.street}, ${a.city}, ${a.state} ${a.zip}`.replace(/\s+,/g, ",");
-  const dr = a.date_range_text?.trim() || (a.date_from && a.date_to ? `${a.date_from} – ${a.date_to}` : "");
-  return dr ? `${core} (${dr})` : core;
 }
 
 function formatVehicleLine(v: ExtractedVehicle): string {

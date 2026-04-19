@@ -52,6 +52,15 @@ function displayLabel(block: DraftBlock): string | null {
   return typeof l === "string" && l.trim() ? l : null;
 }
 
+/** Labeled residency period for address facts (separate from street line in display_payload). */
+function addressDateMetadata(block: DraftBlock): string | null {
+  if (block.entityKind !== "address") {
+    return null;
+  }
+  const m = block.displayPayload.address_date_metadata;
+  return typeof m === "string" && m.trim() ? m.trim() : null;
+}
+
 function isReportManualNoteBlock(block: DraftBlock): boolean {
   return (
     block.blockType === "manual_note" &&
@@ -299,6 +308,7 @@ function DraftBlockView({
   }
 
   if (block.state === "review_needed") {
+    const periodLine = addressDateMetadata(block);
     return (
       <div className="space-y-1">
         <div
@@ -314,6 +324,11 @@ function DraftBlockView({
             </span>
           ) : null}
           <p className="whitespace-pre-wrap wrap-break-word">{text}</p>
+          {periodLine ? (
+            <p className="text-xs mt-1 whitespace-pre-wrap" style={{ color: cr.slate }}>
+              {periodLine}
+            </p>
+          ) : null}
         </div>
         {workflow ? <StateControls block={block} workflow={workflow} /> : null}
       </div>
@@ -321,6 +336,7 @@ function DraftBlockView({
   }
 
   const isManual = block.blockType === "manual_note";
+  const periodLine = addressDateMetadata(block);
   return (
     <div className="space-y-1">
       <div
@@ -342,6 +358,11 @@ function DraftBlockView({
           </span>
         ) : null}
         <p className="whitespace-pre-wrap wrap-break-word">{text}</p>
+        {periodLine ? (
+          <p className="text-xs mt-1 whitespace-pre-wrap" style={{ color: cr.slate }}>
+            {periodLine}
+          </p>
+        ) : null}
       </div>
       {workflow ? <StateControls block={block} workflow={workflow} /> : null}
     </div>

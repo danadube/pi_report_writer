@@ -182,6 +182,11 @@ export function SummarySelectionReview({ reportId }: SummarySelectionReviewProps
                                 </span>
                               ) : null}
                               <span className="text-sm text-[#e8eaf0] wrap-break-word">{c.display_text}</span>
+                              {c.entity_kind === "address" && c.address_date_metadata?.trim() ? (
+                                <span className="text-xs text-[#8b90a0] block mt-1">
+                                  {c.address_date_metadata.trim()}
+                                </span>
+                              ) : null}
                               {c.source_reference?.file_name ? (
                                 <span className="text-[10px] text-[#6b7080] block mt-1">
                                   Source: {c.source_reference.file_name}

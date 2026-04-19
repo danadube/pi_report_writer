@@ -51,6 +51,11 @@ export interface SummaryCandidate {
   section: SummarySectionId;
   label: string | null;
   display_text: string;
+  /**
+   * When `entity_kind` is `address`, labeled date/residency line (e.g. "From … to …").
+   * Kept separate from `display_text` so the draft document shows address and dates distinctly.
+   */
+  address_date_metadata?: string | null;
   source_reference: SummaryCandidateSourceRef | null;
   selected_by_default: boolean;
   subject_index: number | null;

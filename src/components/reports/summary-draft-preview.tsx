@@ -95,6 +95,11 @@ export function SummaryDraftPreview({ payload, selected }: SummaryDraftPreviewPr
                               </span>
                             ) : null}
                             {c.display_text}
+                            {c.entity_kind === "address" && c.address_date_metadata?.trim() ? (
+                              <span className="block text-[#8b90a0] text-xs mt-0.5">
+                                {c.address_date_metadata.trim()}
+                              </span>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
