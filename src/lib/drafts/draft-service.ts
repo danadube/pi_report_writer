@@ -342,6 +342,231 @@ export async function createDraftVersionFromSummaryPrep(
   return { ok: true, version: toVersionDto(created), item_count: seedRows.length };
 }
 
+/**
+ * Creates a new active draft version by copying items from an existing version.
+ * Sets based_on_draft_version_id for lineage; uses current report extraction_generation.
+ */
+export async function branchDraftVersionFromVersion(
+  supabase: Supabase,
+  reportId: string,
+  sourceVersionId: string,
+  userId: string,
+  options: { title?: string | null }
+): Promise<
+  | { ok: true; version: ReportDraftVersionDTO; item_count: number }
+  | { ok: false; status: number; message: string }
+> {
+  const gate = await assertOwnReport(supabase, reportId, userId);
+  if (!gate.ok) {
+    return { ok: false, status: gate.status, message: gate.message };
+  }
+
+  const { data: source, error: srcErr } = await supabase
+    .from("report_draft_versions")
+    .select("*")
+    .eq("id", sourceVersionId)
+    .eq("report_id", reportId)
+    .maybeSingle();
+
+  if (srcErr) {
+    return { ok: false, status: 500, message: srcErr.message };
+  }
+  if (!source) {
+    return { ok: false, status: 404, message: "Draft version not found" };
+  }
+  if (source.status === "finalized") {
+    return { ok: false, status: 409, message: "Cannot branch from a finalized draft version" };
+  }
+
+  const { data: rep, error: repErr } = await supabase
+    .from("reports")
+    .select("extraction_generation")
+    .eq("id", reportId)
+    .single();
+
+  if (repErr || !rep) {
+    return { ok: false, status: 500, message: repErr?.message ?? "Report not found" };
+  }
+
+  const { data: itemRows, error: itemsQErr } = await supabase
+    .from("report_draft_items")
+    .select("*")
+    .eq("draft_version_id", sourceVersionId)
+    .order("sort_order", { ascending: true });
+
+  if (itemsQErr) {
+    return { ok: false, status: 500, message: itemsQErr.message };
+  }
+
+  const { data: maxRow, error: maxErr } = await supabase
+    .from("report_draft_versions")
+    .select("version_number")
+    .eq("report_id", reportId)
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (maxErr) {
+    return { ok: false, status: 500, message: maxErr.message };
+  }
+
+  const nextNum = (maxRow?.version_number ?? 0) + 1;
+  const title =
+    typeof options.title === "string" && options.title.trim()
+      ? options.title.trim()
+      : `Branched from v${source.version_number}`;
+
+  const extractionGen = Number(rep.extraction_generation) || 1;
+
+  const demoted = await demoteActiveDrafts(supabase, reportId);
+  if (!demoted.ok) {
+    return {
+      ok: false,
+      status: 500,
+      message: `Could not demote existing active draft: ${demoted.message}`,
+    };
+  }
+
+  const insertVersion: Database["public"]["Tables"]["report_draft_versions"]["Insert"] = {
+    report_id: reportId,
+    version_number: nextNum,
+    title,
+    status: "active",
+    based_on_draft_version_id: sourceVersionId,
+    extraction_generation: extractionGen,
+    has_blocking_warnings: false,
+    stale_reason: null,
+    created_by: userId,
+  };
+
+  const { data: created, error: insErr } = await supabase
+    .from("report_draft_versions")
+    .insert(insertVersion)
+    .select()
+    .single();
+
+  if (insErr || !created) {
+    return { ok: false, status: 500, message: insErr?.message ?? "Insert failed" };
+  }
+
+  const rows = itemRows ?? [];
+  if (rows.length === 0) {
+    await supabase.from("report_draft_versions").delete().eq("id", created.id);
+    return {
+      ok: false,
+      status: 400,
+      message: "Source draft has no items to copy.",
+    };
+  }
+
+  const itemInserts: Database["public"]["Tables"]["report_draft_items"]["Insert"][] = rows.map(
+    (row) => ({
+      draft_version_id: created.id,
+      scope: row.scope,
+      subject_index: row.subject_index,
+      section_key: row.section_key,
+      entity_kind: row.entity_kind,
+      state: row.state,
+      origin_type: row.origin_type,
+      display_payload: row.display_payload as Json,
+      source_ref_payload: (row.source_ref_payload ?? null) as Json | null,
+      sort_order: row.sort_order,
+      review_reason: row.review_reason,
+      user_note: row.user_note,
+      created_by: userId,
+    })
+  );
+
+  const { error: itemsErr } = await supabase.from("report_draft_items").insert(itemInserts);
+
+  if (itemsErr) {
+    await supabase.from("report_draft_versions").delete().eq("id", created.id);
+    return { ok: false, status: 500, message: itemsErr.message };
+  }
+
+  await insertDraftEvent(supabase, {
+    report_id: reportId,
+    draft_version_id: created.id,
+    draft_item_id: null,
+    event_type: "draft_version_branched",
+    payload: {
+      from_draft_version_id: sourceVersionId,
+      version_number: nextNum,
+      item_count: rows.length,
+    },
+    created_by: userId,
+  });
+
+  return { ok: true, version: toVersionDto(created), item_count: rows.length };
+}
+
+/**
+ * Makes a draft version active (demotes any other active version for the report).
+ */
+export async function activateDraftVersion(
+  supabase: Supabase,
+  reportId: string,
+  versionId: string,
+  userId: string
+): Promise<{ ok: true; version: ReportDraftVersionDTO } | { ok: false; status: number; message: string }> {
+  const gate = await assertOwnReport(supabase, reportId, userId);
+  if (!gate.ok) {
+    return { ok: false, status: gate.status, message: gate.message };
+  }
+
+  const { data: ver, error: vErr } = await supabase
+    .from("report_draft_versions")
+    .select("*")
+    .eq("id", versionId)
+    .eq("report_id", reportId)
+    .maybeSingle();
+
+  if (vErr) {
+    return { ok: false, status: 500, message: vErr.message };
+  }
+  if (!ver) {
+    return { ok: false, status: 404, message: "Draft version not found" };
+  }
+  if (ver.status === "finalized") {
+    return { ok: false, status: 409, message: "Cannot activate a finalized draft version" };
+  }
+  if (ver.status === "archived") {
+    return { ok: false, status: 409, message: "Cannot activate an archived draft version" };
+  }
+
+  const demoted = await demoteActiveDrafts(supabase, reportId);
+  if (!demoted.ok) {
+    return {
+      ok: false,
+      status: 500,
+      message: `Could not demote existing active draft: ${demoted.message}`,
+    };
+  }
+
+  const { data: updated, error: upErr } = await supabase
+    .from("report_draft_versions")
+    .update({ status: "active" })
+    .eq("id", versionId)
+    .eq("report_id", reportId)
+    .select()
+    .single();
+
+  if (upErr || !updated) {
+    return { ok: false, status: 500, message: upErr?.message ?? "Update failed" };
+  }
+
+  await insertDraftEvent(supabase, {
+    report_id: reportId,
+    draft_version_id: versionId,
+    draft_item_id: null,
+    event_type: "draft_version_activated",
+    payload: { version_number: updated.version_number },
+    created_by: userId,
+  });
+
+  return { ok: true, version: toVersionDto(updated) };
+}
+
 export async function addManualDraftItem(
   supabase: Supabase,
   reportId: string,
@@ -377,6 +602,13 @@ export async function addManualDraftItem(
   }
   if (ver.status === "finalized") {
     return { ok: false, status: 409, message: "Cannot modify a finalized draft version" };
+  }
+  if (ver.status !== "active") {
+    return {
+      ok: false,
+      status: 403,
+      message: "Only the active draft version can be edited.",
+    };
   }
 
   if (body.entity_kind !== MANUAL_ENTITY_KIND) {
@@ -508,6 +740,13 @@ export async function updateDraftItem(
   }
   if (ver.status === "finalized") {
     return { ok: false, status: 409, message: "Cannot modify a finalized draft version" };
+  }
+  if (ver.status !== "active") {
+    return {
+      ok: false,
+      status: 403,
+      message: "Only the active draft version can be edited.",
+    };
   }
 
   const { data: existing, error: exErr } = await supabase

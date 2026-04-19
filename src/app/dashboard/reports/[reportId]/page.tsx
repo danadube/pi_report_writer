@@ -3,11 +3,10 @@ import { formatDate, getReportTypeLabel, getStatusLabel } from "@/lib/utils/repo
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Pencil, Printer } from "lucide-react";
-import { DraftDocumentPreview } from "@/components/reports/draft-document-preview";
+import { ReportDraftWorkflow } from "@/components/reports/report-draft-workflow";
 import { ReportExtractionReview } from "@/components/reports/report-extraction-review";
 import { ReportSourcesList } from "@/components/reports/report-sources-list";
 import { SummarySelectionReview } from "@/components/reports/summary-selection-review";
-import type { DraftDocument } from "@/types/draft-document";
 import type { Report } from "@/types";
 
 interface ReportDetailPageProps {
@@ -39,34 +38,11 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
   const report = (await res.json()) as Report;
   const sources = report.sources ?? [];
 
-  let draftDocument: DraftDocument | null = null;
-  let draftPreviewError: string | null = null;
-  let draftNoActive = false;
-
+  let hasDurableDraft = false;
   const versionsRes = await serverFetch(`/api/reports/${reportId}/draft-versions`);
-  if (!versionsRes.ok) {
-    draftPreviewError =
-      versionsRes.status === 401
-        ? "Sign in to load draft preview."
-        : `Could not load draft versions (${versionsRes.status}).`;
-  } else {
-    const versionsJson = (await versionsRes.json()) as {
-      versions?: { id: string; status: string }[];
-    };
-    const active = versionsJson.versions?.find((v) => v.status === "active");
-    if (!active) {
-      draftNoActive = true;
-    } else {
-      const docRes = await serverFetch(
-        `/api/reports/${reportId}/draft-versions/${active.id}/document`
-      );
-      if (docRes.ok) {
-        draftDocument = (await docRes.json()) as DraftDocument;
-      } else {
-        const errBody = (await docRes.json().catch(() => ({}))) as { error?: string };
-        draftPreviewError = errBody.error ?? `Could not load draft document (${docRes.status}).`;
-      }
-    }
+  if (versionsRes.ok) {
+    const vJson = (await versionsRes.json()) as { versions?: unknown[] };
+    hasDurableDraft = (vJson.versions?.length ?? 0) > 0;
   }
 
   return (
@@ -141,13 +117,9 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
 
       <ReportExtractionReview sources={sources} reportId={report.id} />
 
-      <SummarySelectionReview reportId={report.id} />
+      <ReportDraftWorkflow reportId={report.id} />
 
-      <DraftDocumentPreview
-        document={draftDocument}
-        error={draftPreviewError}
-        noActiveDraft={draftNoActive}
-      />
+      <SummarySelectionReview reportId={report.id} legacyCollapsed={hasDurableDraft} />
     </div>
   );
 }
