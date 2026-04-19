@@ -48,7 +48,14 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
 
   return (
     <div className="max-w-3xl space-y-6">
-      <LastWorkedReportTracker reportId={report.id} />
+      <LastWorkedReportTracker
+        snapshot={{
+          id: report.id,
+          subject_name: report.subject_name ?? "",
+          case_name: report.case_name ?? "",
+          updated_at: report.updated_at,
+        }}
+      />
       <div className="flex items-center gap-3">
         <Link
           href="/dashboard/reports"

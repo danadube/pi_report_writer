@@ -1,35 +1,23 @@
 "use client";
 
 import { useEffect } from "react";
-import { saveLastWorkedReport } from "@/lib/last-worked-report";
-import type { Report } from "@/types";
+import {
+  saveLastWorkedReport,
+  type LastWorkedReportSnapshot,
+} from "@/lib/last-worked-report";
 
-export function LastWorkedReportTracker({ reportId }: { reportId: string }) {
+/**
+ * Persists “last worked” from data the server already loaded for this route.
+ * Avoids a redundant client fetch that can fail (auth, errors swallowed) and never write localStorage.
+ */
+export function LastWorkedReportTracker({
+  snapshot,
+}: {
+  snapshot: LastWorkedReportSnapshot;
+}) {
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/reports/${encodeURIComponent(reportId)}`, {
-          cache: "no-store",
-        });
-        if (!res.ok || cancelled) {
-          return;
-        }
-        const report = (await res.json()) as Report;
-        saveLastWorkedReport({
-          id: report.id,
-          subject_name: report.subject_name ?? "",
-          case_name: report.case_name ?? "",
-          updated_at: report.updated_at,
-        });
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [reportId]);
+    saveLastWorkedReport(snapshot);
+  }, [snapshot]);
 
   return null;
 }
