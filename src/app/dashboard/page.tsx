@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { LastWorkedReportCard } from "@/components/reports/last-worked-report-card";
 
 export default function DashboardPage() {
   return (
@@ -19,6 +20,8 @@ export default function DashboardPage() {
           New Report
         </Link>
       </div>
+
+      <LastWorkedReportCard />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="Total Reports" value="—" />
