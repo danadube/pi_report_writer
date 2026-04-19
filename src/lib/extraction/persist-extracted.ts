@@ -91,7 +91,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_people").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_people insert: ${error.message}${extra}` };
     }
   }
@@ -114,7 +116,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_addresses").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_addresses insert: ${error.message}${extra}` };
     }
   }
@@ -135,7 +139,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_phones").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_phones insert: ${error.message}${extra}` };
     }
   }
@@ -155,7 +161,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_emails").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_emails insert: ${error.message}${extra}` };
     }
   }
@@ -176,7 +184,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_vehicles").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_vehicles insert: ${error.message}${extra}` };
     }
   }
@@ -193,7 +203,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_associates").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_associates insert: ${error.message}${extra}` };
     }
   }
@@ -210,7 +222,9 @@ export async function replaceExtractedDataForSource(
     const { error } = await supabase.from("extracted_employment").insert(rows);
     if (error) {
       const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
-      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      const extra = wipe.ok
+        ? ""
+        : `; STRUCTURED_CLEANUP_FAILED (partial structured rows may remain): ${wipe.message}`;
       return { ok: false, message: `extracted_employment insert: ${error.message}${extra}` };
     }
   }

@@ -48,6 +48,19 @@ const EMPTY_EXTRACTED: ExtractedData = {
 
 const EXTRACTION_ERROR_MAX_LEN = 5000;
 
+/** Makes missing-RPC / schema-cache failures easier to diagnose in logs and extraction_error. */
+function hintMissingStructuredRpc(detail: string): string {
+  const d = detail;
+  if (
+    d.includes("delete_extracted_for_source") ||
+    d.includes("increment_report_extraction_generation") ||
+    /does not exist|schema cache/i.test(d)
+  ) {
+    return `${d} [DB: required extraction SQL migrations / RPCs may be missing.]`;
+  }
+  return d;
+}
+
 async function markExtractionFailed(
   supabase: Supabase,
   sourceId: string,
@@ -248,16 +261,24 @@ async function runExtractionInner(
       sourceId,
       EMPTY_EXTRACTED
     );
-    if (!cleared.ok) {
-      await markExtractionFailed(supabase, sourceId, reportId, cleared.message);
-      return { ok: false, message: cleared.message };
-    }
-    // Do not bump extraction_generation here: extraction failed; a wipe is cleanup, not a successful run.
-    const detail = wasTruncated
+    const parseNote = wasTruncated
       ? `${msg} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
       : msg;
-    await markExtractionFailed(supabase, sourceId, reportId, detail);
-    return { ok: false, message: detail };
+
+    if (cleared.ok) {
+      await markExtractionFailed(supabase, sourceId, reportId, hintMissingStructuredRpc(parseNote));
+      return { ok: false, message: hintMissingStructuredRpc(parseNote) };
+    }
+
+    const combined = [
+      "INTEGRITY WARNING: report_sources.extracted_text was updated but clearing structured extracted_* rows failed.",
+      "Structured data may be stale or inconsistent with the saved raw text.",
+      `Parse error: ${parseNote}`,
+      `Clear error: ${hintMissingStructuredRpc(cleared.message)}`,
+    ].join(" ");
+    console.error("[extraction] parse failure with failed structured clear:", combined);
+    await markExtractionFailed(supabase, sourceId, reportId, combined);
+    return { ok: false, message: combined };
   }
 
   const persisted = await replaceExtractedDataForSource(
@@ -274,16 +295,24 @@ async function runExtractionInner(
       sourceId,
       EMPTY_EXTRACTED
     );
-    if (!wiped.ok) {
-      await markExtractionFailed(supabase, sourceId, reportId, wiped.message);
-      return { ok: false, message: wiped.message };
-    }
-    // Do not bump extraction_generation here: structured persist failed; wipe is cleanup, not a successful extraction.
-    const detail = wasTruncated
+    const baseDetail = wasTruncated
       ? `${persisted.message} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
       : persisted.message;
-    await markExtractionFailed(supabase, sourceId, reportId, detail);
-    return { ok: false, message: detail };
+
+    if (wiped.ok) {
+      await markExtractionFailed(supabase, sourceId, reportId, hintMissingStructuredRpc(baseDetail));
+      return { ok: false, message: hintMissingStructuredRpc(baseDetail) };
+    }
+
+    const combined = [
+      "INTEGRITY WARNING: structured insert failed and a full wipe to empty also failed.",
+      "Partial or stale structured rows may remain for this source relative to report_sources.extracted_text.",
+      `Persist error: ${hintMissingStructuredRpc(baseDetail)}`,
+      `Wipe error: ${hintMissingStructuredRpc(wiped.message)}`,
+    ].join(" ");
+    console.error("[extraction] persist failure with failed wipe:", combined);
+    await markExtractionFailed(supabase, sourceId, reportId, combined);
+    return { ok: false, message: combined };
   }
 
   const bumpOk = await afterSuccessfulExtractedReplace(supabase, reportId);
