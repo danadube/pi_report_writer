@@ -28,8 +28,11 @@ export function SummarySelectionReview({ reportId }: SummarySelectionReviewProps
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
+    });
     fetch(`/api/reports/${reportId}/summary-prep`)
       .then(async (res) => {
         if (!res.ok) {
