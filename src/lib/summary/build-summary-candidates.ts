@@ -21,13 +21,29 @@ import {
   type SummarySubjectBlock,
 } from "@/types/summary-candidates";
 
+/** Max selected-by-default per section (STEP 1 + sanity pass). */
+const MAX_CURRENT_ADDRESSES_SELECTED = 1;
 const MAX_PRIOR_ADDRESSES_DEFAULT = 3;
 const MAX_PHONES_DEFAULT = 3;
 const MAX_EMAILS_DEFAULT = 3;
-const MAX_ALIASES_DEFAULT = 8;
-const MAX_ASSOCIATES_DEFAULT = 2;
+const MAX_ASSOCIATES_DEFAULT = 3;
 const MAX_EMPLOYMENT_DEFAULT = 2;
-const MAX_VEHICLES_DEFAULT = 5;
+const MAX_VEHICLES_DEFAULT = 3;
+
+const MAX_ALIASES_DEFAULT = 8;
+
+/** Caps enforced in {@link enforceSectionSelectionCaps} (STEP 6). */
+const SECTION_SELECTION_CAP: Partial<Record<SummarySectionId, number>> = {
+  [SummarySectionId.CURRENT_ADDRESS]: MAX_CURRENT_ADDRESSES_SELECTED,
+  [SummarySectionId.PRIOR_ADDRESSES]: MAX_PRIOR_ADDRESSES_DEFAULT,
+  [SummarySectionId.PHONES]: MAX_PHONES_DEFAULT,
+  [SummarySectionId.EMAILS]: MAX_EMAILS_DEFAULT,
+  [SummarySectionId.ASSOCIATES_RELATIVES]: MAX_ASSOCIATES_DEFAULT,
+  [SummarySectionId.EMPLOYMENT]: MAX_EMPLOYMENT_DEFAULT,
+  [SummarySectionId.VEHICLES]: MAX_VEHICLES_DEFAULT,
+};
+
+const COMMON_EMAIL_HOST = /@(gmail|googlemail|yahoo|ymail|outlook|hotmail|live|msn|icloud|me|mac|aol)\./i;
 
 function sourceLabelMap(sources: ReportSource[]): Map<string, string> {
   const m = new Map<string, string>();
@@ -64,17 +80,88 @@ function parseUsDate(s: string | null): number | null {
   return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
-function scoreAddressCurrent(a: ExtractedAddress): number {
-  let s = 0;
-  const lab = (a.label ?? "").toLowerCase();
-  if (/\b(current|present|residential|mailing)\b/.test(lab)) s += 120;
-  if (/\b(prior|former|previous|old)\b/.test(lab)) s -= 60;
+function recencyScoreForAddress(a: ExtractedAddress): number {
+  const now = Date.now();
   const end = parseUsDate(a.date_to);
   const start = parseUsDate(a.date_from);
-  if (end != null) s += Math.min(end / 1e12, 15);
-  if (start != null) s += Math.min(start / 1e12, 5);
+  let s = 0;
+  if (end != null) {
+    const years = (now - end) / (365.25 * 24 * 3600 * 1000);
+    if (years <= 1) s += 50;
+    else if (years <= 3) s += 35;
+    else if (years <= 8) s += 18;
+    else if (years <= 20) s += 6;
+  }
+  if (start != null && end == null) {
+    const years = (now - start) / (365.25 * 24 * 3600 * 1000);
+    if (years <= 3) s += 12;
+  }
+  return s;
+}
+
+function addressCleanlinessScore(a: ExtractedAddress): number {
+  const st = a.street ?? "";
+  let s = 0;
+  if (st.length > 140) s -= 25;
+  const paren = (st.match(/\(/g) ?? []).length;
+  if (paren > 2) s -= 18;
+  if (/^\s*po\s*box|p\.?\s*o\.?\s*box/i.test(st)) s += 3;
+  return s;
+}
+
+/**
+ * STEP 2 — rank addresses: recent ranges, current/latest labels, clean lines;
+ * downgrade junk / duplicate-prone content.
+ */
+function scoreAddressRank(a: ExtractedAddress): number {
+  let s = 0;
+  const lab = (a.label ?? "").toLowerCase();
+  const street = (a.street ?? "").toLowerCase();
+  const blob = `${street} ${lab} ${a.date_range_text ?? ""}`;
+
+  if (/subdivision name/i.test(blob)) s -= 220;
+  if (/address contains/i.test(blob)) s -= 220;
+
+  if (/\b(current|present|residential|mailing|latest)\b/.test(lab)) s += 120;
+  if (/\b(prior|former|previous|old)\b/.test(lab)) s -= 55;
+
+  s += recencyScoreForAddress(a);
+  s += addressCleanlinessScore(a);
+
+  const end = parseUsDate(a.date_to);
+  const start = parseUsDate(a.date_from);
+  if (end != null) s += Math.min(end / 1e12, 12);
+  if (start != null) s += Math.min(start / 1e12, 4);
   if (a.include_in_report) s += 3;
   return s;
+}
+
+function addressDedupKey(a: ExtractedAddress): string {
+  const street = (a.street ?? "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  const city = (a.city ?? "").trim().toLowerCase();
+  const state = (a.state ?? "").trim().toLowerCase();
+  const zip = (a.zip ?? "").replace(/\D/g, "").slice(0, 10);
+  return `${street}|${city}|${state}|${zip}`;
+}
+
+function dedupeAddressesKeepBestScore(addresses: ExtractedAddress[]): ExtractedAddress[] {
+  const byKey = new Map<string, ExtractedAddress>();
+  for (const a of addresses) {
+    const key = addressDedupKey(a);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, a);
+      continue;
+    }
+    if (scoreAddressRank(a) > scoreAddressRank(existing)) {
+      byKey.set(key, a);
+    }
+  }
+  return [...byKey.values()];
 }
 
 function partitionCurrentPrior(addresses: ExtractedAddress[]): {
@@ -82,7 +169,7 @@ function partitionCurrentPrior(addresses: ExtractedAddress[]): {
   prior: ExtractedAddress[];
 } {
   if (addresses.length === 0) return { current: null, prior: [] };
-  const sorted = [...addresses].sort((a, b) => scoreAddressCurrent(b) - scoreAddressCurrent(a));
+  const sorted = [...addresses].sort((a, b) => scoreAddressRank(b) - scoreAddressRank(a));
   const current = sorted[0]!;
   const prior = sorted.slice(1);
   prior.sort((a, b) => {
@@ -104,28 +191,134 @@ function pickPrimaryPerson(people: ExtractedPerson[], subjectKey: number): Extra
   return pool[0] ?? null;
 }
 
-function phoneScore(p: ExtractedPhone): number {
-  const conf = p.confidence ?? 55;
-  const t = (p.phone_type ?? "").toLowerCase();
-  let bonus = 0;
-  if (t.includes("mobile") || t.includes("cell")) bonus += 12;
-  if (t.includes("land")) bonus += 4;
-  if (p.include_in_report) bonus += 5;
-  return conf + bonus;
+function normalizePhoneDigits(n: string): string {
+  return n.replace(/\D/g, "");
 }
 
-function emailScore(e: ExtractedEmail): number {
-  return (e.confidence ?? 55) + (e.include_in_report ? 5 : 0);
+/** STEP 4 — phones: boost mobile & high confidence; penalize low confidence. */
+function phoneRankScore(p: ExtractedPhone): number {
+  const conf = p.confidence ?? 55;
+  let s = conf;
+  const t = (p.phone_type ?? "").toLowerCase();
+  if (t.includes("mobile") || t.includes("cell")) s += 28;
+  if (t.includes("land")) s += 6;
+  if (t.includes("voip")) s += 2;
+  if (conf > 70) s += 18;
+  if (conf < 50) s -= 38;
+  if (p.include_in_report) s += 5;
+  return s;
+}
+
+function dedupePhonesKeepBestScore(phones: ExtractedPhone[]): ExtractedPhone[] {
+  const byDigits = new Map<string, ExtractedPhone>();
+  for (const p of phones) {
+    const key = normalizePhoneDigits(p.phone_number);
+    if (key.length < 10) {
+      const k = `raw:${p.id}`;
+      byDigits.set(k, p);
+      continue;
+    }
+    const existing = byDigits.get(key);
+    if (!existing) {
+      byDigits.set(key, p);
+      continue;
+    }
+    if (phoneRankScore(p) > phoneRankScore(existing)) {
+      byDigits.set(key, p);
+    }
+  }
+  return [...byDigits.values()];
+}
+
+/** STEP 5 — emails: boost common providers & high confidence; penalize low confidence. */
+function emailRankScoreNum(e: ExtractedEmail): number {
+  const conf = e.confidence ?? 55;
+  let s = conf;
+  if (COMMON_EMAIL_HOST.test(e.email)) s += 14;
+  if (conf > 70) s += 10;
+  if (conf < 50) s -= 32;
+  if (e.include_in_report) s += 5;
+  return s;
+}
+
+function normalizeEmailKey(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function dedupeEmailsKeepBestScore(emails: ExtractedEmail[]): ExtractedEmail[] {
+  const byKey = new Map<string, ExtractedEmail>();
+  for (const e of emails) {
+    const key = normalizeEmailKey(e.email);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, e);
+      continue;
+    }
+    if (emailRankScoreNum(e) > emailRankScoreNum(existing)) {
+      byKey.set(key, e);
+    }
+  }
+  return [...byKey.values()];
 }
 
 function associatePriority(rel: string | null): number {
   const r = (rel ?? "").toLowerCase();
   if (/\bspouse|wife|husband|partner\b/.test(r)) return 100;
-  if (/\bchild|son|daughter\b/.test(r)) return 80;
-  if (/\bparent|mother|father\b/.test(r)) return 70;
-  if (/\bsibling|brother|sister\b/.test(r)) return 60;
-  if (/\brelative|family\b/.test(r)) return 40;
-  return 10;
+  if (/\bchild|son|daughter\b/.test(r)) return 82;
+  if (/\bparent|mother|father\b/.test(r)) return 78;
+  if (/\bsibling|brother|sister\b/.test(r)) return 58;
+  if (/\brelative|family\b/.test(r)) return 35;
+  return 12;
+}
+
+function parseNameDedupKey(name: string): string | null {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return null;
+  const last = parts[parts.length - 1]!.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  if (!last) return null;
+  const first = parts[0]!;
+  const firstInitial = first.replace(/[^a-z]/gi, "").charAt(0).toLowerCase();
+  return `${last}|${firstInitial || "?"}`;
+}
+
+/**
+ * STEP 3 — associates: de-dupe (last + first initial), prefer close relationships,
+ * de-prioritize unclear / long extended lists.
+ */
+function associateRankScore(
+  a: ExtractedAssociate,
+  ordinal: number,
+  total: number
+): number {
+  let s = associatePriority(a.relationship_label);
+  const rel = (a.relationship_label ?? "").trim().toLowerCase();
+  if (!rel || /^(relative|associate|connection|unknown|other)\b/i.test(rel)) {
+    s -= 28;
+  }
+  if (/\b(cousin|niece|nephew|in-law|inlaw|extended|step-)\b/.test(rel)) {
+    s -= 18;
+  }
+  if (total > 12 && ordinal >= 8) s -= 22;
+  if (total > 20 && ordinal >= 10) s -= 15;
+  return s;
+}
+
+function dedupeAssociatesKeepBestScore(associates: ExtractedAssociate[]): ExtractedAssociate[] {
+  const total = associates.length;
+  const scored = associates.map((a, i) => ({
+    a,
+    key: parseNameDedupKey(a.name) ?? `id:${a.id}`,
+    score: associateRankScore(a, i, total),
+  }));
+  scored.sort((x, y) => y.score - x.score);
+  const seen = new Set<string>();
+  const out: ExtractedAssociate[] = [];
+  for (const row of scored) {
+    if (seen.has(row.key)) continue;
+    seen.add(row.key);
+    out.push(row.a);
+  }
+  return out;
 }
 
 function vehicleScore(v: ExtractedVehicle): number {
@@ -146,6 +339,43 @@ function cid(
 ): string {
   const tail = extra ? `:${extra}` : "";
   return `${section}:${kind}:${entityId}${tail}`;
+}
+
+/** STEP 6 — force selected_by_default to respect per-section caps. */
+function enforceSectionSelectionCaps(candidates: SummaryCandidate[]): SummaryCandidate[] {
+  const caps = SECTION_SELECTION_CAP;
+  const bySection = new Map<SummarySectionId, SummaryCandidate[]>();
+  for (const c of candidates) {
+    if (!bySection.has(c.section)) bySection.set(c.section, []);
+    bySection.get(c.section)!.push(c);
+  }
+
+  const result: SummaryCandidate[] = [];
+  for (const section of SUMMARY_SECTION_ORDER) {
+    const list = bySection.get(section);
+    if (!list?.length) continue;
+    const cap = caps[section];
+    if (cap == null) {
+      result.push(...list);
+      continue;
+    }
+    const selected = list.filter((c) => c.selected_by_default);
+    if (selected.length <= cap) {
+      result.push(...list);
+      continue;
+    }
+    const sorted = [...selected].sort(
+      (a, b) => (b.ranking_score ?? 0) - (a.ranking_score ?? 0)
+    );
+    const keepIds = new Set(sorted.slice(0, cap).map((x) => x.id));
+    for (const c of list) {
+      result.push({
+        ...c,
+        selected_by_default: keepIds.has(c.id),
+      });
+    }
+  }
+  return result;
 }
 
 function buildSectionsForSubject(
@@ -255,7 +485,8 @@ function buildSectionsForSubject(
     }
   }
 
-  const { current, prior } = partitionCurrentPrior(data.addresses);
+  const addressesPrepared = dedupeAddressesKeepBestScore(data.addresses);
+  const { current, prior } = partitionCurrentPrior(addressesPrepared);
 
   if (current) {
     const line = formatAddressLine(current);
@@ -267,16 +498,17 @@ function buildSectionsForSubject(
       source_reference: refFor(current.source_id, fileMap),
       selected_by_default: true,
       subject_index: current.subject_index ?? subjectKey,
-      ranking_score: scoreAddressCurrent(current),
+      ranking_score: scoreAddressRank(current),
       entity_kind: "address",
       entity_id: current.id,
     });
   }
 
-  for (let i = 0; i < prior.length; i++) {
-    const a = prior[i]!;
+  const priorSorted = [...prior].sort((a, b) => scoreAddressRank(b) - scoreAddressRank(a));
+  for (let i = 0; i < priorSorted.length; i++) {
+    const a = priorSorted[i]!;
     const line = formatAddressLine(a);
-    const rank = scoreAddressCurrent(a);
+    const rank = scoreAddressRank(a);
     push({
       id: cid(SummarySectionId.PRIOR_ADDRESSES, "address", a.id),
       section: SummarySectionId.PRIOR_ADDRESSES,
@@ -291,12 +523,14 @@ function buildSectionsForSubject(
     });
   }
 
-  const phonesRanked = [...data.phones].sort((a, b) => phoneScore(b) - phoneScore(a));
-  for (let i = 0; i < phonesRanked.length; i++) {
-    const p = phonesRanked[i]!;
+  const phonesPrepared = dedupePhonesKeepBestScore(data.phones).sort(
+    (a, b) => phoneRankScore(b) - phoneRankScore(a)
+  );
+  for (let i = 0; i < phonesPrepared.length; i++) {
+    const p = phonesPrepared[i]!;
     const t = p.phone_type?.trim();
     const display = t ? `${p.phone_number} — ${t}` : p.phone_number;
-    const sc = phoneScore(p);
+    const sc = phoneRankScore(p);
     push({
       id: cid(SummarySectionId.PHONES, "phone", p.id),
       section: SummarySectionId.PHONES,
@@ -311,9 +545,11 @@ function buildSectionsForSubject(
     });
   }
 
-  const emailsRanked = [...data.emails].sort((a, b) => emailScore(b) - emailScore(a));
-  for (let i = 0; i < emailsRanked.length; i++) {
-    const e = emailsRanked[i]!;
+  const emailsPrepared = dedupeEmailsKeepBestScore(data.emails).sort(
+    (a, b) => emailRankScoreNum(b) - emailRankScoreNum(a)
+  );
+  for (let i = 0; i < emailsPrepared.length; i++) {
+    const e = emailsPrepared[i]!;
     push({
       id: cid(SummarySectionId.EMAILS, "email", e.id),
       section: SummarySectionId.EMAILS,
@@ -322,19 +558,24 @@ function buildSectionsForSubject(
       source_reference: refFor(e.source_id, fileMap),
       selected_by_default: i < MAX_EMAILS_DEFAULT,
       subject_index: e.subject_index ?? subjectKey,
-      ranking_score: emailScore(e),
+      ranking_score: emailRankScoreNum(e),
       entity_kind: "email",
       entity_id: e.id,
     });
   }
 
-  const assocRanked = [...data.associates].sort(
-    (a, b) => associatePriority(b.relationship_label) - associatePriority(a.relationship_label)
-  );
+  const assocDeduped = dedupeAssociatesKeepBestScore(data.associates);
+  const assocTotal = data.associates.length;
+  const assocRanked = [...assocDeduped].sort((a, b) => {
+    const sa = associateRankScore(a, 0, assocTotal);
+    const sb = associateRankScore(b, 0, assocTotal);
+    return sb - sa;
+  });
   for (let i = 0; i < assocRanked.length; i++) {
     const a = assocRanked[i]!;
     const rel = a.relationship_label?.trim();
     const display = rel ? `${a.name} — ${rel}` : a.name;
+    const rScore = associateRankScore(a, i, assocTotal);
     push({
       id: cid(SummarySectionId.ASSOCIATES_RELATIVES, "associate", a.id),
       section: SummarySectionId.ASSOCIATES_RELATIVES,
@@ -343,7 +584,7 @@ function buildSectionsForSubject(
       source_reference: refFor(a.source_id, fileMap),
       selected_by_default: i < MAX_ASSOCIATES_DEFAULT,
       subject_index: a.subject_index ?? subjectKey,
-      ranking_score: associatePriority(a.relationship_label),
+      ranking_score: rScore,
       entity_kind: "associate",
       entity_id: a.id,
     });
@@ -385,9 +626,23 @@ function buildSectionsForSubject(
     });
   }
 
+  let flat: SummaryCandidate[] = [];
+  for (const id of SUMMARY_SECTION_ORDER) {
+    flat.push(...(bySection.get(id) ?? []));
+  }
+  flat = enforceSectionSelectionCaps(flat);
+
+  const bySectionAfter = new Map<SummarySectionId, SummaryCandidate[]>();
+  for (const id of SUMMARY_SECTION_ORDER) {
+    bySectionAfter.set(id, []);
+  }
+  for (const c of flat) {
+    bySectionAfter.get(c.section)?.push(c);
+  }
+
   const sections: SummarySectionBlock[] = [];
   for (const id of SUMMARY_SECTION_ORDER) {
-    const candidates = bySection.get(id) ?? [];
+    const candidates = bySectionAfter.get(id) ?? [];
     if (candidates.length === 0) continue;
     sections.push({
       section: id,
