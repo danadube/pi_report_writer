@@ -30,6 +30,12 @@ export interface ReportDraftVersionDTO {
   stale_reason: string | null;
 }
 
+/** List entries include server-computed counts for dashboard UI. */
+export interface ReportDraftVersionWithCounts extends ReportDraftVersionDTO {
+  review_needed_count: number;
+  warning_count: number;
+}
+
 /** API shape for report_draft_items. */
 export interface ReportDraftItemDTO {
   id: string;
