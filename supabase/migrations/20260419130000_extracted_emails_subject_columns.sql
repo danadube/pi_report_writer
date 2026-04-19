@@ -1,6 +1,7 @@
 -- Emails from TLO-style sources; subject columns for primary vs alternate TLO subjects.
+-- Table may already exist (e.g. created manually); keep migration idempotent for remote push.
 
-create table public.extracted_emails (
+create table if not exists public.extracted_emails (
   id                uuid primary key default gen_random_uuid(),
   report_id         uuid not null references public.reports(id) on delete cascade,
   source_id         uuid references public.report_sources(id) on delete set null,
@@ -20,6 +21,8 @@ comment on column public.extracted_people.subject_index is '1-based TLO subject 
 comment on column public.extracted_people.is_primary_subject is 'True when this row is the investigation primary (typically Subject 1).';
 
 alter table public.extracted_emails enable row level security;
+
+drop policy if exists "users can manage extracted emails for their reports" on public.extracted_emails;
 
 create policy "users can manage extracted emails for their reports"
   on public.extracted_emails for all
