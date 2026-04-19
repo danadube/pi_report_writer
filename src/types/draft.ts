@@ -28,6 +28,10 @@ export interface ReportDraftVersionDTO {
   updated_at: string;
   finalized_at: string | null;
   stale_reason: string | null;
+  /** Set on list responses: items in `review_needed` state. */
+  review_needed_count?: number;
+  /** Set on list responses: `system_warning` origin rows. */
+  warning_count?: number;
 }
 
 /** API shape for report_draft_items. */

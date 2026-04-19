@@ -93,6 +93,41 @@ async function assertOwnReport(
   return { ok: true };
 }
 
+async function countDraftItemsForVersions(
+  supabase: Supabase,
+  versionIds: string[]
+): Promise<Map<string, { review_needed_count: number; warning_count: number }>> {
+  const map = new Map<string, { review_needed_count: number; warning_count: number }>();
+  for (const id of versionIds) {
+    map.set(id, { review_needed_count: 0, warning_count: 0 });
+  }
+  if (versionIds.length === 0) {
+    return map;
+  }
+
+  const { data: rows, error } = await supabase
+    .from("report_draft_items")
+    .select("draft_version_id, state, origin_type")
+    .in("draft_version_id", versionIds);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  for (const row of rows ?? []) {
+    const vid = row.draft_version_id as string;
+    const cur = map.get(vid);
+    if (!cur) continue;
+    if (row.state === "review_needed") {
+      cur.review_needed_count += 1;
+    }
+    if (row.origin_type === "system_warning") {
+      cur.warning_count += 1;
+    }
+  }
+  return map;
+}
+
 export async function listDraftVersionsForReport(
   supabase: Supabase,
   reportId: string,
@@ -114,7 +149,28 @@ export async function listDraftVersionsForReport(
   if (error) {
     return { ok: false, status: 500, message: error.message };
   }
-  return { ok: true, versions: (data ?? []).map(toVersionDto) };
+
+  const versions = (data ?? []).map(toVersionDto);
+  const ids = versions.map((v) => v.id);
+
+  let counts: Map<string, { review_needed_count: number; warning_count: number }>;
+  try {
+    counts = await countDraftItemsForVersions(supabase, ids);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Count failed";
+    return { ok: false, status: 500, message: msg };
+  }
+
+  const withCounts: ReportDraftVersionDTO[] = versions.map((v) => {
+    const c = counts.get(v.id) ?? { review_needed_count: 0, warning_count: 0 };
+    return {
+      ...v,
+      review_needed_count: c.review_needed_count,
+      warning_count: c.warning_count,
+    };
+  });
+
+  return { ok: true, versions: withCounts };
 }
 
 export async function getDraftVersionWithItems(

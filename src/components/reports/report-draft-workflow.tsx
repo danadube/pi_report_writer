@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DraftDocumentPreview } from "@/components/reports/draft-document-preview";
+import { collectDraftReviewPanelEntries } from "@/lib/drafts/collect-draft-review-entries";
 import type { DraftItemState, DraftVersionStatus, ReportDraftVersionDTO } from "@/types/draft";
 import type { DraftDocument } from "@/types/draft-document";
+
+const REVIEW_PANEL_ID = "draft-review-required-panel";
 
 /** CaseRender brand tokens (see docs/reference/CaseRender_Brand_Identity.html) */
 const cr = {
@@ -106,6 +109,15 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   const isViewingActive = viewedVersion != null && activeVersion?.id === viewedVersion.id;
   const canEdit = isViewingActive && viewedVersion != null && viewedVersion.status !== "finalized";
   const workflowReadOnlyFinalized = viewedVersion != null && viewedVersion.status === "finalized";
+
+  const reviewEntries = useMemo(() => collectDraftReviewPanelEntries(document), [document]);
+
+  const scrollToReviewPanel = useCallback(() => {
+    globalThis.document.getElementById(REVIEW_PANEL_ID)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
 
   const loadDocument = useCallback(
     async (versionId: string) => {
@@ -311,6 +323,7 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
         return;
       }
       await loadDocument(viewedVersionId);
+      await loadVersions();
     } catch {
       setActionError("Update failed.");
     } finally {
@@ -565,8 +578,39 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
                           Created {formatVersionTimestamp(v.created_at)} · Updated{" "}
                           {formatVersionTimestamp(v.updated_at)}
                         </p>
+                        {(v.review_needed_count ?? 0) > 0 || (v.warning_count ?? 0) > 0 ? (
+                          <p className="text-[10px] font-sans mt-0.5" style={{ color: `${cr.slate}cc` }}>
+                            {(v.review_needed_count ?? 0) > 0
+                              ? `${v.review_needed_count} need review`
+                              : null}
+                            {(v.review_needed_count ?? 0) > 0 && (v.warning_count ?? 0) > 0 ? " · " : null}
+                            {(v.warning_count ?? 0) > 0
+                              ? `${v.warning_count} warning${(v.warning_count ?? 0) === 1 ? "" : "s"}`
+                              : null}
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-1.5 justify-end shrink-0">
+                        {v.status === "stale" ? (
+                          <button
+                            type="button"
+                            disabled={loadingDocument}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              scrollToReviewPanel();
+                            }}
+                            className="rounded px-2 py-1 text-[10px] font-sans font-medium disabled:opacity-50"
+                            style={{
+                              borderWidth: 1,
+                              borderStyle: "solid",
+                              borderColor: `${cr.gold}88`,
+                              color: cr.gold,
+                              backgroundColor: `${cr.deepNavy}cc`,
+                            }}
+                          >
+                            Review
+                          </button>
+                        ) : null}
                         {showActivate ? (
                           <button
                             type="button"
@@ -690,6 +734,127 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
         </div>
       </div>
 
+      <div
+        id={REVIEW_PANEL_ID}
+        className="scroll-mt-10 rounded-lg border p-4 space-y-3"
+        style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.midnight}ee` }}
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="font-serif text-base font-normal" style={{ color: cr.chalk }}>
+            Review required
+          </h3>
+          <span className="text-xs font-medium tabular-nums font-sans" style={{ color: cr.gold }}>
+            {reviewEntries.length === 0 ? "Clear" : `${reviewEntries.length} open`}
+          </span>
+        </div>
+        {reviewEntries.length === 0 ? (
+          <p className="text-sm font-sans" style={{ color: cr.slate }}>
+            Nothing is waiting for a decision in this version&apos;s assembled document.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {(
+              [
+                ["extraction_warning", "Extraction & system notices"],
+                ["review_needed_fact", "Facts requiring a decision"],
+              ] as const
+            ).map(([group, label]) => {
+              const rows = reviewEntries.filter((e) => e.group === group);
+              if (rows.length === 0) return null;
+              return (
+                <div key={group}>
+                  <p
+                    className="text-[10px] font-sans uppercase tracking-widest mb-2"
+                    style={{ color: cr.slate }}
+                  >
+                    {label}
+                  </p>
+                  <ul className="space-y-2">
+                    {rows.map((e) => {
+                      const text =
+                        typeof e.block.displayPayload.display_text === "string"
+                          ? e.block.displayPayload.display_text
+                          : "";
+                      return (
+                        <li
+                          key={e.block.draftItemId}
+                          className="rounded-md border px-3 py-2.5 font-sans"
+                          style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.deepNavy}55` }}
+                        >
+                          <p className="text-[10px] uppercase tracking-wide mb-1" style={{ color: cr.slate }}>
+                            {e.pathLabel}
+                          </p>
+                          <p className="text-sm whitespace-pre-wrap wrap-break-word" style={{ color: cr.chalk }}>
+                            {text}
+                          </p>
+                          <p className="text-xs mt-1" style={{ color: cr.slate }}>
+                            State:{" "}
+                            <span style={{ color: cr.gold }}>{e.block.state}</span>
+                          </p>
+                          {canEdit && !workflowReadOnlyFinalized ? (
+                            <div
+                              className="flex flex-wrap gap-1.5 mt-3 pt-2 border-t font-sans"
+                              style={{ borderColor: cr.deepNavy }}
+                            >
+                              <button
+                                type="button"
+                                disabled={patchingItemId === e.block.draftItemId}
+                                onClick={() => void handlePatchState(e.block.draftItemId, "included")}
+                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+                                style={{
+                                  borderWidth: 1,
+                                  borderStyle: "solid",
+                                  borderColor: `${cr.steelBlue}88`,
+                                  color: cr.chalk,
+                                }}
+                              >
+                                Include
+                              </button>
+                              <button
+                                type="button"
+                                disabled={patchingItemId === e.block.draftItemId}
+                                onClick={() => void handlePatchState(e.block.draftItemId, "excluded")}
+                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+                                style={{
+                                  borderWidth: 1,
+                                  borderStyle: "solid",
+                                  borderColor: `${cr.steelBlue}88`,
+                                  color: cr.chalk,
+                                }}
+                              >
+                                Exclude
+                              </button>
+                              <button
+                                type="button"
+                                disabled={patchingItemId === e.block.draftItemId}
+                                onClick={() => void handlePatchState(e.block.draftItemId, "review_needed")}
+                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+                                style={{
+                                  borderWidth: 1,
+                                  borderStyle: "solid",
+                                  borderColor: `${cr.steelBlue}88`,
+                                  color: cr.chalk,
+                                }}
+                              >
+                                Keep as review needed
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-xs mt-2" style={{ color: `${cr.slate}cc` }}>
+                              Activate this version to edit items from the queue or inline preview.
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {loadingDocument && !document && !documentLoadError ? (
         <p className="text-sm font-sans pl-1" style={{ color: cr.slate }}>
           Loading draft document…
@@ -703,6 +868,11 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           captionTone={captionTone}
           workflow={previewWorkflow}
           manualNoteActions={manualNoteActions}
+          jumpToReviewQueue={
+            document?.status === "stale" && reviewEntries.length > 0
+              ? { count: reviewEntries.length, onJump: scrollToReviewPanel }
+              : undefined
+          }
         />
       )}
     </section>

@@ -36,6 +36,8 @@ export interface DraftDocumentPreviewProps {
   captionTone?: "default" | "amber";
   workflow?: DraftWorkflowControls;
   manualNoteActions?: ManualNoteActions;
+  /** Stale-banner shortcut when the review queue has open items. */
+  jumpToReviewQueue?: { count: number; onJump: () => void };
 }
 
 type ExcludedEntry = { pathLabel: string; block: DraftBlock };
@@ -382,6 +384,7 @@ export function DraftDocumentPreview({
   captionTone = "default",
   workflow,
   manualNoteActions,
+  jumpToReviewQueue,
 }: DraftDocumentPreviewProps) {
   const [showExcluded, setShowExcluded] = useState(false);
 
@@ -497,6 +500,20 @@ export function DraftDocumentPreview({
             Extraction has changed since this draft was created. Review notices and lines before relying on this
             version.
           </p>
+          {jumpToReviewQueue && jumpToReviewQueue.count > 0 ? (
+            <button
+              type="button"
+              onClick={jumpToReviewQueue.onJump}
+              className="mt-3 rounded-md border px-3 py-1.5 text-xs font-medium font-sans"
+              style={{
+                borderColor: `${cr.gold}88`,
+                color: cr.gold,
+                backgroundColor: `${cr.midnight}99`,
+              }}
+            >
+              Open review queue ({jumpToReviewQueue.count})
+            </button>
+          ) : null}
         </div>
       ) : null}
 
