@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Pencil, Printer } from "lucide-react";
 import { ReportExtractionReview } from "@/components/reports/report-extraction-review";
 import { ReportSourcesList } from "@/components/reports/report-sources-list";
+import { SummarySelectionReview } from "@/components/reports/summary-selection-review";
 import type { Report } from "@/types";
 
 interface ReportDetailPageProps {
@@ -107,6 +108,8 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
       </div>
 
       <ReportExtractionReview sources={sources} reportId={report.id} />
+
+      <SummarySelectionReview reportId={report.id} />
     </div>
   );
 }
