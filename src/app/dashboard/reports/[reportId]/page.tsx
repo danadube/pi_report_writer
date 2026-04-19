@@ -3,6 +3,7 @@ import { formatDate, getReportTypeLabel, getStatusLabel } from "@/lib/utils/repo
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Pencil, Printer } from "lucide-react";
+import { LastWorkedReportTracker } from "@/components/reports/last-worked-report-tracker";
 import { ReportDraftWorkflow } from "@/components/reports/report-draft-workflow";
 import { ReportExtractionReview } from "@/components/reports/report-extraction-review";
 import { ReportSourcesList } from "@/components/reports/report-sources-list";
@@ -47,6 +48,7 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
 
   return (
     <div className="max-w-3xl space-y-6">
+      <LastWorkedReportTracker reportId={report.id} />
       <div className="flex items-center gap-3">
         <Link
           href="/dashboard/reports"
