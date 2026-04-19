@@ -21,6 +21,7 @@ import type { ExtractedData } from "@/types";
 
 type Supabase = SupabaseClient<Database>;
 
+/** Bumps report extraction_generation only after structured data was saved successfully for this source (not after failure-path wipes). */
 async function afterSuccessfulExtractedReplace(
   supabase: Supabase,
   reportId: string
@@ -29,7 +30,7 @@ async function afterSuccessfulExtractedReplace(
   if (!bump.ok) {
     return {
       ok: false,
-      message: `Structured rows were saved, but extraction_generation could not be updated: ${bump.message}`,
+      message: `Structured rows were saved, but extraction_generation could not be updated: ${bump.message}. Re-run extraction now that the database RPC exists, or apply scripts/repair-extraction-generation-mismatch.sql once so draft staleness can realign.`,
     };
   }
   return { ok: true };
@@ -251,11 +252,7 @@ async function runExtractionInner(
       await markExtractionFailed(supabase, sourceId, reportId, cleared.message);
       return { ok: false, message: cleared.message };
     }
-    const bump = await afterSuccessfulExtractedReplace(supabase, reportId);
-    if (!bump.ok) {
-      await markExtractionFailed(supabase, sourceId, reportId, bump.message);
-      return { ok: false, message: bump.message };
-    }
+    // Do not bump extraction_generation here: extraction failed; a wipe is cleanup, not a successful run.
     const detail = wasTruncated
       ? `${msg} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
       : msg;
@@ -281,11 +278,7 @@ async function runExtractionInner(
       await markExtractionFailed(supabase, sourceId, reportId, wiped.message);
       return { ok: false, message: wiped.message };
     }
-    const bump = await afterSuccessfulExtractedReplace(supabase, reportId);
-    if (!bump.ok) {
-      await markExtractionFailed(supabase, sourceId, reportId, bump.message);
-      return { ok: false, message: bump.message };
-    }
+    // Do not bump extraction_generation here: structured persist failed; wipe is cleanup, not a successful extraction.
     const detail = wasTruncated
       ? `${persisted.message} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
       : persisted.message;

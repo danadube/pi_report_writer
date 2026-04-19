@@ -219,8 +219,9 @@ export async function replaceExtractedDataForSource(
 }
 
 /**
- * Call after a successful `replaceExtractedDataForSource` so draft staleness can track extraction churn.
- * Kept separate from replace so a bump failure does not imply structured data failed to persist.
+ * Increments `reports.extraction_generation` when extraction materially succeeded for a source.
+ * Call only from the extraction pipeline after structured `replaceExtractedDataForSource` succeeds — not after
+ * failure-path wipes to empty data. Kept separate from replace so a bump failure does not imply structured rows failed.
  */
 export async function bumpReportExtractionGeneration(
   supabase: Supabase,

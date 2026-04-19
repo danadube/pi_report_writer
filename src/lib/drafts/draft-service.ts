@@ -192,12 +192,20 @@ async function insertDraftEvent(
   }
 }
 
-async function demoteActiveDrafts(supabase: Supabase, reportId: string): Promise<void> {
-  await supabase
+async function demoteActiveDrafts(
+  supabase: Supabase,
+  reportId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { error } = await supabase
     .from("report_draft_versions")
     .update({ status: "draft" })
     .eq("report_id", reportId)
     .eq("status", "active");
+
+  if (error) {
+    return { ok: false, message: error.message };
+  }
+  return { ok: true };
 }
 
 export async function createDraftVersionFromSummaryPrep(
@@ -265,7 +273,14 @@ export async function createDraftVersionFromSummaryPrep(
 
   const extractionGen = Number(rep.extraction_generation) || 1;
 
-  await demoteActiveDrafts(supabase, reportId);
+  const demoted = await demoteActiveDrafts(supabase, reportId);
+  if (!demoted.ok) {
+    return {
+      ok: false,
+      status: 500,
+      message: `Could not demote existing active draft: ${demoted.message}`,
+    };
+  }
 
   const insertVersion: Database["public"]["Tables"]["report_draft_versions"]["Insert"] = {
     report_id: reportId,

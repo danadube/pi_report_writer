@@ -146,6 +146,7 @@ export async function POST(request: Request) {
   }
 
   let extractionSucceeded = false;
+  let extractionError: string | undefined;
   try {
     const { runExtractionForSource } = await import(
       "@/lib/extraction/extraction-pipeline"
@@ -157,9 +158,11 @@ export async function POST(request: Request) {
     });
     extractionSucceeded = ex.ok;
     if (!ex.ok) {
+      extractionError = ex.message;
       console.error("[uploads] extraction:", ex.message);
     }
   } catch (e) {
+    extractionError = e instanceof Error ? e.message : "Extraction failed";
     console.error("[uploads] extraction threw:", e);
     await persistExtractionFailureFromUpload(supabase, sourceRow.id, reportId, e);
   }
@@ -217,6 +220,7 @@ export async function POST(request: Request) {
     {
       source,
       extractionSucceeded,
+      ...(extractionError ? { extractionError } : {}),
       sourceReloadFailed: reloadFailed,
       ...(reloadError ? { reloadError: reloadError.message } : {}),
       fileUrl: publicUrl,
