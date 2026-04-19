@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatDate, getReportTypeLabel, getStatusLabel } from "@/lib/utils/reports";
 import { ReportStatus, type ReportListItem } from "@/types";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,8 @@ interface ReportsTableProps {
 }
 
 export function ReportsTable({ reports }: ReportsTableProps) {
+  const router = useRouter();
+
   if (reports.length === 0) {
     return (
       <div className="rounded-lg border border-[#2a2f42] bg-[#161922] p-12 text-center">
@@ -46,17 +49,31 @@ export function ReportsTable({ reports }: ReportsTableProps) {
             <th className="px-4 py-3 text-left text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
               Date
             </th>
-            <th className="px-4 py-3" />
+            <th className="px-4 py-3 text-right text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#1e2130]">
-          {reports.map((report) => (
+          {reports.map((report) => {
+            const workspaceHref = `/dashboard/reports/${report.id}`;
+            const detailsHref = `${workspaceHref}?details=1`;
+            return (
             <tr
               key={report.id}
-              className="hover:bg-[#1e2130] transition-colors"
+              className="hover:bg-[#1e2130] transition-colors cursor-pointer"
+              onClick={() => {
+                router.push(workspaceHref);
+              }}
             >
               <td className="px-4 py-3 text-[#e8eaf0] font-medium">
-                {report.subject_name}
+                <Link
+                  href={workspaceHref}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[#e8eaf0] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4f7ef5]/80 rounded-sm"
+                >
+                  {report.subject_name}
+                </Link>
               </td>
               <td className="px-4 py-3 text-[#8b90a0]">{report.case_name}</td>
               <td className="px-4 py-3 text-[#8b90a0]">
@@ -68,16 +85,20 @@ export function ReportsTable({ reports }: ReportsTableProps) {
               <td className="px-4 py-3 text-[#8b90a0]">
                 {formatDate(report.report_date)}
               </td>
-              <td className="px-4 py-3 text-right">
+              <td
+                className="px-4 py-3 text-right"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <Link
-                  href={`/dashboard/reports/${report.id}`}
-                  className="text-[#4f7ef5] text-xs hover:underline"
+                  href={detailsHref}
+                  className="text-[#4f7ef5] text-xs font-medium hover:underline"
                 >
-                  View
+                  Details
                 </Link>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

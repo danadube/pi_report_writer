@@ -5,8 +5,9 @@ import { DraftDocumentPreview } from "@/components/reports/draft-document-previe
 import { collectDraftReviewPanelEntries } from "@/lib/drafts/collect-draft-review-entries";
 import type { DraftItemState, DraftVersionStatus, ReportDraftVersionDTO } from "@/types/draft";
 import type { DraftDocument } from "@/types/draft-document";
+import { DRAFT_REVIEW_PANEL_ID } from "@/components/reports/draft-review-panel-id";
 
-const REVIEW_PANEL_ID = "draft-review-required-panel";
+const REVIEW_PANEL_ID = DRAFT_REVIEW_PANEL_ID;
 
 /** CaseRender brand tokens (see docs/reference/CaseRender_Brand_Identity.html) */
 const cr = {

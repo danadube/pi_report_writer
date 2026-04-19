@@ -2,19 +2,23 @@ import { serverFetch } from "@/lib/api/server-fetch";
 import { formatDate, getReportTypeLabel, getStatusLabel } from "@/lib/utils/reports";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Pencil, Printer } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { ReportDraftWorkflow } from "@/components/reports/report-draft-workflow";
 import { ReportExtractionReview } from "@/components/reports/report-extraction-review";
-import { ReportSourcesList } from "@/components/reports/report-sources-list";
 import { SummarySelectionReview } from "@/components/reports/summary-selection-review";
+import { ReportWorkspaceShell } from "@/components/reports/report-workspace-shell";
 import type { Report } from "@/types";
 
 interface ReportDetailPageProps {
   params: Promise<{ reportId: string }>;
+  searchParams: Promise<{ details?: string; panel?: string }>;
 }
 
-export default async function ReportDetailPage({ params }: ReportDetailPageProps) {
+export default async function ReportDetailPage({ params, searchParams }: ReportDetailPageProps) {
   const { reportId } = await params;
+  const sp = await searchParams;
+  const defaultDetailsOpen =
+    sp.details === "1" || sp.panel === "details" || sp.details === "true";
 
   const res = await serverFetch(`/api/reports/${reportId}`);
 
@@ -46,7 +50,7 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-5">
       <div className="flex items-center gap-3">
         <Link
           href="/dashboard/reports"
@@ -57,78 +61,28 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
         </Link>
       </div>
 
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-[#e8eaf0]">
-            {report.subject_name || "—"}
-          </h1>
-          <p className="text-sm text-[#8b90a0] mt-0.5">{report.case_name || "—"}</p>
-        </div>
-        <div className="flex gap-2">
-          <Link
-            href={`/dashboard/reports/${report.id}/print`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[#2a2f42] px-3 py-2 text-sm text-[#8b90a0] hover:bg-[#1e2130] transition-colors"
-          >
-            <Printer size={14} />
-            Print Preview
-          </Link>
-          <Link
-            href={`/dashboard/reports/${report.id}/edit`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-[#4f7ef5] px-3 py-2 text-sm font-medium text-white hover:bg-[#3d6de0] transition-colors"
-          >
-            <Pencil size={14} />
-            Edit
-          </Link>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-[#2a2f42] bg-[#161922] divide-y divide-[#2a2f42]">
-        <DetailRow label="Report Type" value={getReportTypeLabel(report.report_type)} />
-        <DetailRow label="Status" value={getStatusLabel(report.status)} />
-        <DetailRow label="Case Name" value={report.case_name || "—"} />
-        <DetailRow label="Client Name" value={report.client_name || "—"} />
-        <DetailRow label="Investigator" value={report.investigator_name || "—"} />
-        <DetailRow label="Report Date" value={formatDate(report.report_date)} />
-        <DetailRow label="Created" value={formatDate(report.created_at)} />
-        <DetailRow label="Last Updated" value={formatDate(report.updated_at)} />
-      </div>
-
-      <div className="rounded-lg border border-[#2a2f42] bg-[#161922] p-5">
-        <p className="text-xs font-semibold text-[#8b90a0] uppercase tracking-wide mb-3">
-          Investigator Notes
+      <div>
+        <h1 className="text-xl font-semibold text-[#e8eaf0]">
+          {report.subject_name || "—"}
+        </h1>
+        <p className="text-sm text-[#8b90a0] mt-0.5">{report.case_name || "—"}</p>
+        <p className="text-xs text-[#8b90a0] mt-2">
+          {getReportTypeLabel(report.report_type)} · {getStatusLabel(report.status)} ·{" "}
+          {formatDate(report.report_date)}
         </p>
-        {report.summary_notes ? (
-          <p className="text-sm text-[#e8eaf0] whitespace-pre-wrap">{report.summary_notes}</p>
-        ) : (
-          <p className="text-sm text-[#8b90a0] italic">No notes added yet.</p>
-        )}
       </div>
 
-      <div className="space-y-3">
-        <p className="text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
-          Source documents
-        </p>
-        <ReportSourcesList
-          sources={sources}
-          reportId={report.id}
-          linkToExtractionReview
-        />
-      </div>
+      <ReportWorkspaceShell
+        report={report}
+        sources={sources}
+        defaultDetailsOpen={defaultDetailsOpen}
+      >
+        <ReportExtractionReview sources={sources} reportId={report.id} />
 
-      <ReportExtractionReview sources={sources} reportId={report.id} />
+        <ReportDraftWorkflow reportId={report.id} />
 
-      <ReportDraftWorkflow reportId={report.id} />
-
-      {!hasDurableDraft ? <SummarySelectionReview reportId={report.id} /> : null}
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex px-5 py-3 gap-4">
-      <span className="w-36 flex-shrink-0 text-sm text-[#8b90a0]">{label}</span>
-      <span className="text-sm text-[#e8eaf0]">{value}</span>
+        {!hasDurableDraft ? <SummarySelectionReview reportId={report.id} /> : null}
+      </ReportWorkspaceShell>
     </div>
   );
 }
