@@ -145,6 +145,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
   }
 
+  let extractionSucceeded = false;
   try {
     const { runExtractionForSource } = await import(
       "@/lib/extraction/extraction-pipeline"
@@ -154,6 +155,7 @@ export async function POST(request: Request) {
       reportId,
       storageObjectPath: objectPath,
     });
+    extractionSucceeded = ex.ok;
     if (!ex.ok) {
       console.error("[uploads] extraction:", ex.message);
     }
@@ -214,6 +216,7 @@ export async function POST(request: Request) {
   return NextResponse.json(
     {
       source,
+      extractionSucceeded,
       sourceReloadFailed: reloadFailed,
       ...(reloadError ? { reloadError: reloadError.message } : {}),
       fileUrl: publicUrl,

@@ -26,7 +26,7 @@ async function wipeExtractedForSource(
   supabase: Supabase,
   reportId: string,
   sourceId: string
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const { error } = await supabase.rpc("delete_extracted_for_source", {
     p_report_id: reportId,
     p_source_id: sourceId,
@@ -36,7 +36,9 @@ async function wipeExtractedForSource(
       "[extraction] wipeExtractedForSource failed (partial extracted_* rows may remain):",
       error.message
     );
+    return { ok: false, message: error.message };
   }
+  return { ok: true };
 }
 
 /**
@@ -88,8 +90,9 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_people").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_people insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_people insert: ${error.message}${extra}` };
     }
   }
 
@@ -110,8 +113,9 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_addresses").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_addresses insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_addresses insert: ${error.message}${extra}` };
     }
   }
 
@@ -130,8 +134,9 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_phones").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_phones insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_phones insert: ${error.message}${extra}` };
     }
   }
 
@@ -149,8 +154,9 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_emails").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_emails insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_emails insert: ${error.message}${extra}` };
     }
   }
 
@@ -169,8 +175,9 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_vehicles").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_vehicles insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_vehicles insert: ${error.message}${extra}` };
     }
   }
 
@@ -185,8 +192,9 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_associates").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_associates insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_associates insert: ${error.message}${extra}` };
     }
   }
 
@@ -201,10 +209,28 @@ export async function replaceExtractedDataForSource(
     }));
     const { error } = await supabase.from("extracted_employment").insert(rows);
     if (error) {
-      await wipeExtractedForSource(supabase, reportId, sourceId);
-      return { ok: false, message: `extracted_employment insert: ${error.message}` };
+      const wipe = await wipeExtractedForSource(supabase, reportId, sourceId);
+      const extra = wipe.ok ? "" : `; cleanup failed: ${wipe.message}`;
+      return { ok: false, message: `extracted_employment insert: ${error.message}${extra}` };
     }
   }
 
+  return { ok: true };
+}
+
+/**
+ * Call after a successful `replaceExtractedDataForSource` so draft staleness can track extraction churn.
+ * Kept separate from replace so a bump failure does not imply structured data failed to persist.
+ */
+export async function bumpReportExtractionGeneration(
+  supabase: Supabase,
+  reportId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { error } = await supabase.rpc("increment_report_extraction_generation", {
+    p_report_id: reportId,
+  });
+  if (error) {
+    return { ok: false, message: error.message };
+  }
   return { ok: true };
 }

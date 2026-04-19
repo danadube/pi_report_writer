@@ -13,10 +13,27 @@ import {
   MAX_PDF_BYTES,
 } from "@/lib/extraction/pdf-text";
 import { parseTlo } from "@/lib/extraction/parsers/tlo-parser";
-import { replaceExtractedDataForSource } from "@/lib/extraction/persist-extracted";
+import {
+  bumpReportExtractionGeneration,
+  replaceExtractedDataForSource,
+} from "@/lib/extraction/persist-extracted";
 import type { ExtractedData } from "@/types";
 
 type Supabase = SupabaseClient<Database>;
+
+async function afterSuccessfulExtractedReplace(
+  supabase: Supabase,
+  reportId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const bump = await bumpReportExtractionGeneration(supabase, reportId);
+  if (!bump.ok) {
+    return {
+      ok: false,
+      message: `Structured rows were saved, but extraction_generation could not be updated: ${bump.message}`,
+    };
+  }
+  return { ok: true };
+}
 
 const EMPTY_EXTRACTED: ExtractedData = {
   people: [],
@@ -224,7 +241,21 @@ async function runExtractionInner(
     const msg =
       e instanceof Error ? e.message : "Structured parse failed (unexpected error)";
     console.error("[extraction] parseTlo:", e);
-    await replaceExtractedDataForSource(supabase, reportId, sourceId, EMPTY_EXTRACTED);
+    const cleared = await replaceExtractedDataForSource(
+      supabase,
+      reportId,
+      sourceId,
+      EMPTY_EXTRACTED
+    );
+    if (!cleared.ok) {
+      await markExtractionFailed(supabase, sourceId, reportId, cleared.message);
+      return { ok: false, message: cleared.message };
+    }
+    const bump = await afterSuccessfulExtractedReplace(supabase, reportId);
+    if (!bump.ok) {
+      await markExtractionFailed(supabase, sourceId, reportId, bump.message);
+      return { ok: false, message: bump.message };
+    }
     const detail = wasTruncated
       ? `${msg} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
       : msg;
@@ -240,12 +271,32 @@ async function runExtractionInner(
   );
   if (!persisted.ok) {
     console.error("[extraction] persist structured:", persisted.message);
-    await replaceExtractedDataForSource(supabase, reportId, sourceId, EMPTY_EXTRACTED);
+    const wiped = await replaceExtractedDataForSource(
+      supabase,
+      reportId,
+      sourceId,
+      EMPTY_EXTRACTED
+    );
+    if (!wiped.ok) {
+      await markExtractionFailed(supabase, sourceId, reportId, wiped.message);
+      return { ok: false, message: wiped.message };
+    }
+    const bump = await afterSuccessfulExtractedReplace(supabase, reportId);
+    if (!bump.ok) {
+      await markExtractionFailed(supabase, sourceId, reportId, bump.message);
+      return { ok: false, message: bump.message };
+    }
     const detail = wasTruncated
       ? `${persisted.message} (Note: raw text was truncated to ${MAX_EXTRACTED_CHARS.toLocaleString()} characters.)`
       : persisted.message;
     await markExtractionFailed(supabase, sourceId, reportId, detail);
     return { ok: false, message: detail };
+  }
+
+  const bumpOk = await afterSuccessfulExtractedReplace(supabase, reportId);
+  if (!bumpOk.ok) {
+    await markExtractionFailed(supabase, sourceId, reportId, bumpOk.message);
+    return { ok: false, message: bumpOk.message };
   }
 
   const { error: doneErr } = await supabase

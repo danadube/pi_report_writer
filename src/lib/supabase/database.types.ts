@@ -23,6 +23,7 @@ export interface Database {
           report_date: string | null;
           summary_notes: string | null;
           generated_report_html: string | null;
+          extraction_generation: number;
           created_at: string;
           updated_at: string;
         };
@@ -39,6 +40,7 @@ export interface Database {
           report_date?: string | null;
           summary_notes?: string | null;
           generated_report_html?: string | null;
+          extraction_generation?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -55,6 +57,7 @@ export interface Database {
           report_date?: string | null;
           summary_notes?: string | null;
           generated_report_html?: string | null;
+          extraction_generation?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -366,6 +369,186 @@ export interface Database {
         };
         Relationships: [];
       };
+      report_draft_versions: {
+        Row: {
+          id: string;
+          report_id: string;
+          version_number: number;
+          title: string;
+          status:
+            | "draft"
+            | "active"
+            | "stale"
+            | "finalized"
+            | "archived";
+          based_on_draft_version_id: string | null;
+          extraction_generation: number;
+          has_blocking_warnings: boolean;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+          finalized_at: string | null;
+          stale_reason: string | null;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          version_number: number;
+          title?: string;
+          status?:
+            | "draft"
+            | "active"
+            | "stale"
+            | "finalized"
+            | "archived";
+          based_on_draft_version_id?: string | null;
+          extraction_generation?: number;
+          has_blocking_warnings?: boolean;
+          created_by: string;
+          created_at?: string;
+          updated_at?: string;
+          finalized_at?: string | null;
+          stale_reason?: string | null;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          version_number?: number;
+          title?: string;
+          status?:
+            | "draft"
+            | "active"
+            | "stale"
+            | "finalized"
+            | "archived";
+          based_on_draft_version_id?: string | null;
+          extraction_generation?: number;
+          has_blocking_warnings?: boolean;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+          finalized_at?: string | null;
+          stale_reason?: string | null;
+        };
+        Relationships: [];
+      };
+      report_draft_items: {
+        Row: {
+          id: string;
+          draft_version_id: string;
+          scope: "subject" | "report";
+          subject_index: number | null;
+          section_key: string;
+          entity_kind: string;
+          state: "included" | "excluded" | "review_needed";
+          origin_type: "candidate" | "manual" | "system_warning";
+          display_payload: Json;
+          source_ref_payload: Json | null;
+          sort_order: number;
+          review_reason: string | null;
+          user_note: string | null;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          draft_version_id: string;
+          scope: "subject" | "report";
+          subject_index?: number | null;
+          section_key: string;
+          entity_kind: string;
+          state?: "included" | "excluded" | "review_needed";
+          origin_type: "candidate" | "manual" | "system_warning";
+          display_payload: Json;
+          source_ref_payload?: Json | null;
+          sort_order?: number;
+          review_reason?: string | null;
+          user_note?: string | null;
+          created_by: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          draft_version_id?: string;
+          scope?: "subject" | "report";
+          subject_index?: number | null;
+          section_key?: string;
+          entity_kind?: string;
+          state?: "included" | "excluded" | "review_needed";
+          origin_type?: "candidate" | "manual" | "system_warning";
+          display_payload?: Json;
+          source_ref_payload?: Json | null;
+          sort_order?: number;
+          review_reason?: string | null;
+          user_note?: string | null;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      report_draft_events: {
+        Row: {
+          id: string;
+          report_id: string;
+          draft_version_id: string | null;
+          draft_item_id: string | null;
+          event_type: string;
+          payload: Json;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          draft_version_id?: string | null;
+          draft_item_id?: string | null;
+          event_type: string;
+          payload?: Json;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          draft_version_id?: string | null;
+          draft_item_id?: string | null;
+          event_type?: string;
+          payload?: Json;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      report_final_snapshots: {
+        Row: {
+          id: string;
+          report_id: string;
+          draft_version_id: string;
+          snapshot_payload: Json;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          report_id: string;
+          draft_version_id: string;
+          snapshot_payload: Json;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          report_id?: string;
+          draft_version_id?: string;
+          snapshot_payload?: Json;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       user_profiles: {
         Row: {
           id: string;
@@ -400,6 +583,12 @@ export interface Database {
         };
         Returns: undefined;
       };
+      increment_report_extraction_generation: {
+        Args: {
+          p_report_id: string;
+        };
+        Returns: number;
+      };
     };
     Enums: {
       report_type: "BACKGROUND_INVESTIGATION" | "SURVEILLANCE";
@@ -409,6 +598,15 @@ export interface Database {
         | "DMV_RECORDS"
         | "MANUAL_ENTRY"
         | "OTHER";
+      draft_version_status:
+        | "draft"
+        | "active"
+        | "stale"
+        | "finalized"
+        | "archived";
+      draft_item_scope: "subject" | "report";
+      draft_item_state: "included" | "excluded" | "review_needed";
+      draft_item_origin: "candidate" | "manual" | "system_warning";
     };
     CompositeTypes: Record<string, never>;
   };

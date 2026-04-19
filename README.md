@@ -4,6 +4,10 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 - **Node.js** >= **20.9** (required by Next.js 16). Use `.nvmrc` with [nvm](https://github.com/nvm-sh/nvm) (`nvm use`) or align your toolchain with `package.json` `engines`.
 
+## Documentation
+
+Project design and architecture notes live under [`docs/`](docs/README.md) (composition layer, draft document model, multi-subject rules).
+
 ## Getting Started
 
 First, run the development server:
