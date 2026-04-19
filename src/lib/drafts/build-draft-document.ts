@@ -1,4 +1,5 @@
 import {
+  SECTION_KEY_REPORT_NOTES,
   SECTION_KEY_SYSTEM_WARNINGS,
   sectionLabelForKey,
 } from "@/lib/drafts/draft-item-registry";
@@ -74,8 +75,14 @@ export function buildDraftDocument(
 
   const reportKeys = [...new Set(reportItems.map((i) => i.section_key))];
   reportKeys.sort((a, b) => {
-    if (a === SECTION_KEY_SYSTEM_WARNINGS) return -1;
-    if (b === SECTION_KEY_SYSTEM_WARNINGS) return 1;
+    const rank = (k: string) => {
+      if (k === SECTION_KEY_SYSTEM_WARNINGS) return 0;
+      if (k === SECTION_KEY_REPORT_NOTES) return 1;
+      return 2;
+    };
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
     return a.localeCompare(b);
   });
   const reportSections = buildSectionsForKeys(reportKeys, reportItems);

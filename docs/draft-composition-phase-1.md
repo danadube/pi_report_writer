@@ -32,7 +32,7 @@ Apply with **Supabase CLI** (`supabase db push`, migration SQL, or Dashboard). *
 
 ### Phase 2 (validation, stale enforcement, assembler)
 
-- **Registry** (`draft-item-registry.ts`): allowed `section_key` values (summary sections + `SYSTEM_WARNINGS`), valid `(scope, section_key, entity_kind, origin_type)` tuples, candidate entity kinds per summary section.
+- **Registry** (`draft-item-registry.ts`): allowed `section_key` values (summary sections + `SYSTEM_WARNINGS` for system warnings + `REPORT_NOTES` for report-scoped manual notes), valid `(scope, section_key, entity_kind, origin_type)` tuples, candidate entity kinds per summary section.
 - **Payload validators** (`draft-payload-validators.ts`): candidate seed payloads, `manual_note` payloads, `stale_extraction` system warning payloads; seed rows validated before insert.
 - **Stale service** (`draft-stale.ts`): on read (`getDraftVersionWithItems` / document route), compares `reports.extraction_generation` to `report_draft_versions.extraction_generation`; if they differ and the version is not finalized/archived, sets version `stale`, `has_blocking_warnings`, `stale_reason`, and upserts one report-level `system_warning` item (`SYSTEM_WARNINGS` / `stale_extraction`, `review_needed`). Events: `draft_marked_stale` (first transition only), `draft_stale_warning_created` (when the warning row is first inserted).
 - **Assembler** (`build-draft-document.ts`): builds `DraftDocument` with `reportSections` and per-subject `sections` (deterministic section order); block types `fact` | `manual_note` | `warning`.

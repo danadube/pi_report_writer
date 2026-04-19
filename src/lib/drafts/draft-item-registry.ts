@@ -3,14 +3,26 @@ import { SUMMARY_SECTION_ORDER, SUMMARY_SECTION_LABELS, type SummarySectionId } 
 /** Report-level system sections (not subject summary sections). */
 export const SECTION_KEY_SYSTEM_WARNINGS = "SYSTEM_WARNINGS" as const;
 
+/** Report-scoped manual editorial notes (not system warnings). */
+export const SECTION_KEY_REPORT_NOTES = "REPORT_NOTES" as const;
+
+/** Report-level section keys (warnings, notes — not subject summary columns). */
+export const REPORT_LEVEL_SECTION_KEYS = [
+  SECTION_KEY_SYSTEM_WARNINGS,
+  SECTION_KEY_REPORT_NOTES,
+] as const;
+
+export type ReportLevelSectionKey = (typeof REPORT_LEVEL_SECTION_KEYS)[number];
+
+/** @deprecated Use REPORT_LEVEL_SECTION_KEYS; kept for older references. */
 export const REPORT_SYSTEM_SECTION_KEYS = [SECTION_KEY_SYSTEM_WARNINGS] as const;
 
 export type ReportSystemSectionKey = (typeof REPORT_SYSTEM_SECTION_KEYS)[number];
 
-/** All section keys allowed in draft items (content + system). */
+/** All section keys allowed in draft items (content + report-level). */
 export const ALL_DRAFT_SECTION_KEYS: string[] = [
   ...SUMMARY_SECTION_ORDER,
-  ...REPORT_SYSTEM_SECTION_KEYS,
+  ...REPORT_LEVEL_SECTION_KEYS,
 ];
 
 export function isContentSectionKey(key: string): key is SummarySectionId {
@@ -19,6 +31,10 @@ export function isContentSectionKey(key: string): key is SummarySectionId {
 
 export function isReportSystemSectionKey(key: string): key is ReportSystemSectionKey {
   return (REPORT_SYSTEM_SECTION_KEYS as readonly string[]).includes(key);
+}
+
+export function isReportLevelSectionKey(key: string): key is ReportLevelSectionKey {
+  return (REPORT_LEVEL_SECTION_KEYS as readonly string[]).includes(key);
 }
 
 /** Entity kinds produced by summary-prep seeding (candidate origin, subject scope). */
@@ -68,7 +84,7 @@ export function isAllowedDraftItemCombination(shape: DraftItemShape): boolean {
   if (origin_type === "manual") {
     if (entity_kind !== MANUAL_ENTITY_KIND) return false;
     if (scope === "report") {
-      return section_key === SECTION_KEY_SYSTEM_WARNINGS;
+      return section_key === SECTION_KEY_REPORT_NOTES;
     }
     if (scope === "subject") {
       return isContentSectionKey(section_key);
@@ -95,10 +111,10 @@ export function validateManualDraftSectionKey(
   scope: "subject" | "report"
 ): { ok: true } | { ok: false; message: string } {
   if (scope === "report") {
-    if (sectionKey !== SECTION_KEY_SYSTEM_WARNINGS) {
+    if (sectionKey !== SECTION_KEY_REPORT_NOTES) {
       return {
         ok: false,
-        message: "Report-scoped manual items must use section_key SYSTEM_WARNINGS",
+        message: "Report-scoped manual items must use section_key REPORT_NOTES",
       };
     }
     return { ok: true };
@@ -116,6 +132,9 @@ export function validateManualDraftSectionKey(
 export function sectionLabelForKey(sectionKey: string): string {
   if (sectionKey === SECTION_KEY_SYSTEM_WARNINGS) {
     return "Report notices";
+  }
+  if (sectionKey === SECTION_KEY_REPORT_NOTES) {
+    return "Report notes";
   }
   if (isContentSectionKey(sectionKey)) {
     return SUMMARY_SECTION_LABELS[sectionKey as SummarySectionId];
