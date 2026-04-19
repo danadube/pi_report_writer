@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DraftDocumentPreview } from "@/components/reports/draft-document-preview";
-import type { DraftItemState, ReportDraftVersionDTO } from "@/types/draft";
+import type { DraftItemState, DraftVersionStatus, ReportDraftVersionDTO } from "@/types/draft";
 import type { DraftDocument } from "@/types/draft-document";
 
 /** CaseRender brand tokens (see docs/reference/CaseRender_Brand_Identity.html) */
@@ -34,8 +34,39 @@ function pickWorkingVersion(
   return { version: versions[0], isOfficialActive: false };
 }
 
+function formatVersionTimestamp(iso: string | null | undefined): string {
+  if (!iso) {
+    return "—";
+  }
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
+      new Date(iso)
+    );
+  } catch {
+    return iso;
+  }
+}
+
+function statusBadgeLabel(status: DraftVersionStatus): string {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "draft":
+      return "Draft";
+    case "stale":
+      return "Stale";
+    case "finalized":
+      return "Finalized";
+    case "archived":
+      return "Archived";
+    default:
+      return status;
+  }
+}
+
 export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   const [versions, setVersions] = useState<ReportDraftVersionDTO[] | null>(null);
+  const [viewedVersionId, setViewedVersionId] = useState<string | null>(null);
   const [document, setDocument] = useState<DraftDocument | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [documentLoadError, setDocumentLoadError] = useState<string | null>(null);
@@ -43,18 +74,38 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDocument, setLoadingDocument] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [branching, setBranching] = useState(false);
-  const [activating, setActivating] = useState(false);
+  const [branchingId, setBranchingId] = useState<string | null>(null);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [addingNote, setAddingNote] = useState(false);
   const [patchingItemId, setPatchingItemId] = useState<string | null>(null);
 
-  const working = useMemo(
-    () => (versions ? pickWorkingVersion(versions) : null),
+  const sortedVersions = useMemo(() => {
+    if (!versions?.length) return [];
+    return [...versions].sort((a, b) => b.version_number - a.version_number);
+  }, [versions]);
+
+  const versionNumberById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const v of versions ?? []) {
+      m.set(v.id, v.version_number);
+    }
+    return m;
+  }, [versions]);
+
+  const viewedVersion = useMemo(
+    () => (viewedVersionId && versions ? versions.find((v) => v.id === viewedVersionId) ?? null : null),
+    [versions, viewedVersionId]
+  );
+
+  const activeVersion = useMemo(
+    () => versions?.find((v) => v.status === "active") ?? null,
     [versions]
   );
 
-  const canEdit = working?.isOfficialActive === true;
+  const isViewingActive = viewedVersion != null && activeVersion?.id === viewedVersion.id;
+  const canEdit = isViewingActive && viewedVersion != null && viewedVersion.status !== "finalized";
+  const workflowReadOnlyFinalized = viewedVersion != null && viewedVersion.status === "finalized";
 
   const loadDocument = useCallback(
     async (versionId: string) => {
@@ -112,17 +163,24 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   }, [loadVersions]);
 
   useEffect(() => {
-    if (versions === null || listError) {
+    if (!versions?.length) {
+      setViewedVersionId(null);
       return;
     }
-    const picked = pickWorkingVersion(versions);
-    if (!picked) {
-      setDocument(null);
-      setDocumentLoadError(null);
+    setViewedVersionId((prev) => {
+      if (prev != null && versions.some((v) => v.id === prev)) {
+        return prev;
+      }
+      return pickWorkingVersion(versions)!.version.id;
+    });
+  }, [versions]);
+
+  useEffect(() => {
+    if (!viewedVersionId || listError) {
       return;
     }
-    void loadDocument(picked.version.id);
-  }, [versions, listError, loadDocument]);
+    void loadDocument(viewedVersionId);
+  }, [viewedVersionId, listError, loadDocument]);
 
   const handleCreateDraft = async () => {
     setCreating(true);
@@ -138,7 +196,11 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
         setActionError(j.error ?? `Create draft failed (${res.status}).`);
         return;
       }
+      const json = (await res.json()) as { version?: ReportDraftVersionDTO };
       await loadVersions();
+      if (json.version?.id) {
+        setViewedVersionId(json.version.id);
+      }
     } catch {
       setActionError("Create draft failed.");
     } finally {
@@ -146,89 +208,81 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
     }
   };
 
-  const handleBranch = async () => {
-    if (!working) {
-      return;
-    }
-    setBranching(true);
+  const handleBranchFrom = async (sourceVersionId: string) => {
+    setBranchingId(sourceVersionId);
     setActionError(null);
     try {
-      const res = await fetch(
-        `/api/reports/${reportId}/draft-versions/${working.version.id}/branch`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        }
-      );
+      const res = await fetch(`/api/reports/${reportId}/draft-versions/${sourceVersionId}/branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         setActionError(j.error ?? `Branch failed (${res.status}).`);
         return;
       }
+      const json = (await res.json()) as { version?: ReportDraftVersionDTO };
       await loadVersions();
+      if (json.version?.id) {
+        setViewedVersionId(json.version.id);
+      }
     } catch {
       setActionError("Branch failed.");
     } finally {
-      setBranching(false);
+      setBranchingId(null);
     }
   };
 
-  const handleActivate = async () => {
-    if (!working) {
-      return;
-    }
-    setActivating(true);
+  const handleActivateFrom = async (versionId: string) => {
+    setActivatingId(versionId);
     setActionError(null);
     try {
-      const res = await fetch(
-        `/api/reports/${reportId}/draft-versions/${working.version.id}/activate`,
-        { method: "POST" }
-      );
+      const res = await fetch(`/api/reports/${reportId}/draft-versions/${versionId}/activate`, {
+        method: "POST",
+      });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         setActionError(j.error ?? `Set active failed (${res.status}).`);
         return;
       }
       await loadVersions();
+      setViewedVersionId(versionId);
     } catch {
       setActionError("Set active failed.");
     } finally {
-      setActivating(false);
+      setActivatingId(null);
     }
   };
 
   const handleAddNote = async () => {
     const text = noteText.trim();
-    if (!text || !working || !canEdit) {
+    if (!text || !viewedVersionId || !canEdit) {
       return;
     }
     setAddingNote(true);
     setActionError(null);
     try {
-      const res = await fetch(
-        `/api/reports/${reportId}/draft-versions/${working.version.id}/items`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const res = await fetch(`/api/reports/${reportId}/draft-versions/${viewedVersionId}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          section_key: "REPORT_NOTES",
+          entity_kind: "manual_note",
+          scope: "report",
+          display_payload: {
             section_key: "REPORT_NOTES",
-            entity_kind: "manual_note",
-            scope: "report",
-            display_payload: {
-              section_key: "REPORT_NOTES",
-              display_text: text,
-            },
-          }),
-        }
-      );
+            display_text: text,
+          },
+        }),
+      });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         setActionError(j.error ?? `Could not add note (${res.status}).`);
         return;
       }
       setNoteText("");
-      await loadDocument(working.version.id);
+      await loadDocument(viewedVersionId);
     } catch {
       setActionError("Could not add note.");
     } finally {
@@ -237,14 +291,14 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   };
 
   const handlePatchState = async (itemId: string, state: DraftItemState) => {
-    if (!working || !canEdit) {
+    if (!viewedVersionId || !canEdit) {
       return;
     }
     setPatchingItemId(itemId);
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/reports/${reportId}/draft-versions/${working.version.id}/items/${itemId}`,
+        `/api/reports/${reportId}/draft-versions/${viewedVersionId}/items/${itemId}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -256,7 +310,7 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
         setActionError(j.error ?? `Update failed (${res.status}).`);
         return;
       }
-      await loadDocument(working.version.id);
+      await loadDocument(viewedVersionId);
     } catch {
       setActionError("Update failed.");
     } finally {
@@ -264,24 +318,79 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
     }
   };
 
+  const handleSaveManualNote = useCallback(
+    async (itemId: string, displayText: string) => {
+      if (!viewedVersionId) return;
+      setActionError(null);
+      const res = await fetch(
+        `/api/reports/${reportId}/draft-versions/${viewedVersionId}/items/${itemId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ display_text: displayText }),
+        }
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(j.error ?? `Could not save note (${res.status}).`);
+        throw new Error(j.error ?? "Save failed");
+      }
+      await loadDocument(viewedVersionId);
+    },
+    [reportId, viewedVersionId, loadDocument]
+  );
+
+  const handleDeleteManualNote = useCallback(
+    async (itemId: string) => {
+      if (!viewedVersionId) return;
+      setActionError(null);
+      const res = await fetch(
+        `/api/reports/${reportId}/draft-versions/${viewedVersionId}/items/${itemId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(j.error ?? `Could not delete note (${res.status}).`);
+        throw new Error(j.error ?? "Delete failed");
+      }
+      await loadDocument(viewedVersionId);
+    },
+    [reportId, viewedVersionId, loadDocument]
+  );
+
   const workingCaption =
-    working == null
+    viewedVersion == null
       ? null
-      : working.isOfficialActive
-        ? "Working copy: the active draft for this report (edits apply here only)."
-        : `Viewing latest saved draft v${working.version.version_number} (${working.version.status}). Read-only — branch or set active to edit.`;
+      : isViewingActive
+        ? `Editing the active draft (v${viewedVersion.version_number}). Line edits apply to this version only.`
+        : viewedVersion.status === "finalized"
+          ? `Viewing v${viewedVersion.version_number} (finalized, read-only).`
+          : `Viewing v${viewedVersion.version_number} (${viewedVersion.status}). Read-only — activate this version or branch from it to edit.`;
 
-  const captionTone = working && !working.isOfficialActive ? "amber" : "default";
+  const captionTone: "default" | "amber" =
+    viewedVersion && !isViewingActive && viewedVersion.status !== "finalized" ? "amber" : "default";
 
-  const workflowReadOnlyFinalized = working != null && working.version.status === "finalized";
+  const previewWorkflow =
+    canEdit && !workflowReadOnlyFinalized
+      ? {
+          onPatchState: handlePatchState,
+          pendingItemId: patchingItemId,
+          readOnly: false,
+        }
+      : {
+          onPatchState: async () => {},
+          pendingItemId: null,
+          readOnly: true,
+        };
 
-  const showBranch =
-    versions != null && versions.length > 0 && working != null && working.version.status !== "finalized";
-  const showActivate =
-    working != null &&
-    !working.isOfficialActive &&
-    working.version.status !== "finalized" &&
-    working.version.status !== "archived";
+  const manualNoteActions =
+    canEdit && !workflowReadOnlyFinalized && viewedVersionId
+      ? {
+          canEdit: true,
+          onSave: handleSaveManualNote,
+          onDelete: handleDeleteManualNote,
+        }
+      : undefined;
 
   if (loadingList && versions === null) {
     return (
@@ -370,34 +479,133 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
               Durable draft
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            {showBranch ? (
-              <button
-                type="button"
-                onClick={() => void handleBranch()}
-                disabled={branching || loadingDocument}
-                className="rounded-md border px-3 py-2 text-xs font-sans font-medium disabled:opacity-50"
-                style={{
-                  borderColor: cr.steelBlue,
-                  color: cr.chalk,
-                  backgroundColor: `${cr.deepNavy}99`,
-                }}
-              >
-                {branching ? "Branching…" : "Branch Draft"}
-              </button>
-            ) : null}
-            {showActivate ? (
-              <button
-                type="button"
-                onClick={() => void handleActivate()}
-                disabled={activating || loadingDocument}
-                className="rounded-md px-3 py-2 text-xs font-sans font-medium text-white disabled:opacity-50"
-                style={{ backgroundColor: cr.steelBlue }}
-              >
-                {activating ? "Setting…" : "Set Active"}
-              </button>
-            ) : null}
-          </div>
+        </div>
+
+        <div
+          className="rounded-lg border p-3 space-y-2"
+          style={{ borderColor: `${cr.deepNavy}`, backgroundColor: `${cr.deepNavy}44` }}
+          aria-label="Draft versions"
+        >
+          <p
+            className="text-[10px] font-sans font-semibold uppercase tracking-widest"
+            style={{ color: cr.slate }}
+          >
+            Versions
+          </p>
+          <ul className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
+            {sortedVersions.map((v) => {
+              const selected = v.id === viewedVersionId;
+              const isActiveRow = v.status === "active";
+              const showActivate =
+                !isActiveRow && v.status !== "finalized" && v.status !== "archived";
+              const showBranch = v.status !== "finalized";
+              const parentNum = v.based_on_draft_version_id
+                ? versionNumberById.get(v.based_on_draft_version_id)
+                : undefined;
+
+              let roleLine: string;
+              if (selected) {
+                if (isActiveRow && v.status !== "finalized") {
+                  roleLine = "Shown below · active draft (editable)";
+                } else if (v.status === "finalized") {
+                  roleLine = "Shown below · read-only (finalized)";
+                } else {
+                  roleLine = "Shown below · read-only until activated or branched";
+                }
+              } else if (isActiveRow) {
+                roleLine = "Active draft";
+              } else {
+                roleLine = "Not shown";
+              }
+
+              return (
+                <li key={v.id}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setViewedVersionId(v.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setViewedVersionId(v.id);
+                      }
+                    }}
+                    className="rounded-md border px-2.5 py-2 text-left cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D1B2E] focus-visible:ring-[#0D4F8C]/80"
+                    style={{
+                      borderColor: selected ? `${cr.steelBlue}99` : cr.deepNavy,
+                      backgroundColor: selected ? `${cr.midnight}ee` : `${cr.midnight}99`,
+                    }}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-serif text-sm tabular-nums" style={{ color: cr.chalk }}>
+                            v{v.version_number}
+                          </span>
+                          <span
+                            className="text-[10px] font-sans font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                            style={{
+                              color: isActiveRow ? cr.chalk : cr.slate,
+                              backgroundColor: isActiveRow ? `${cr.steelBlue}44` : `${cr.deepNavy}cc`,
+                              border: `1px solid ${cr.deepNavy}`,
+                            }}
+                          >
+                            {statusBadgeLabel(v.status)}
+                          </span>
+                        </div>
+                        <p className="text-[10px] font-sans leading-snug" style={{ color: cr.slate }}>
+                          {roleLine}
+                        </p>
+                        {parentNum != null ? (
+                          <p className="text-[10px] font-sans italic" style={{ color: `${cr.chalk}cc` }}>
+                            Branched from v{parentNum}
+                          </p>
+                        ) : null}
+                        <p className="text-[10px] font-sans mt-0.5" style={{ color: `${cr.slate}dd` }}>
+                          Created {formatVersionTimestamp(v.created_at)} · Updated{" "}
+                          {formatVersionTimestamp(v.updated_at)}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 justify-end shrink-0">
+                        {showActivate ? (
+                          <button
+                            type="button"
+                            disabled={activatingId === v.id || loadingDocument}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleActivateFrom(v.id);
+                            }}
+                            className="rounded px-2 py-1 text-[10px] font-sans font-medium text-white disabled:opacity-50"
+                            style={{ backgroundColor: cr.steelBlue }}
+                          >
+                            {activatingId === v.id ? "…" : "Activate"}
+                          </button>
+                        ) : null}
+                        {showBranch ? (
+                          <button
+                            type="button"
+                            disabled={branchingId === v.id || loadingDocument}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleBranchFrom(v.id);
+                            }}
+                            className="rounded border px-2 py-1 text-[10px] font-sans font-medium disabled:opacity-50"
+                            style={{
+                              borderColor: cr.steelBlue,
+                              color: cr.chalk,
+                              backgroundColor: `${cr.deepNavy}99`,
+                            }}
+                          >
+                            {branchingId === v.id ? "…" : "Branch"}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
 
         {actionError ? (
@@ -414,19 +622,19 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           </p>
         ) : null}
 
-        {!canEdit && working && !workflowReadOnlyFinalized ? (
+        {!canEdit && viewedVersion && !workflowReadOnlyFinalized ? (
           <div
             className="rounded-md border px-3 py-2.5 text-sm font-sans"
             style={{
-              borderColor: `${cr.gold}66`,
+              borderColor: `${cr.gold}55`,
               backgroundColor: `${cr.deepNavy}80`,
               color: cr.chalk,
             }}
             role="status"
           >
-            This draft is not active. Editing is disabled. Use <strong className="font-semibold">Branch Draft</strong>{" "}
-            to copy it into a new editable draft, or <strong className="font-semibold">Set Active</strong> to make this
-            version the one editable draft.
+            This version is not the active draft. Editing is disabled. Use{" "}
+            <strong className="font-semibold">Activate</strong> to make it editable, or{" "}
+            <strong className="font-semibold">Branch</strong> to copy it into a new active draft.
           </div>
         ) : null}
 
@@ -450,9 +658,9 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
                 rows={2}
-                disabled={!canEdit || workflowReadOnlyFinalized || loadingDocument || !working}
+                disabled={!canEdit || workflowReadOnlyFinalized || loadingDocument || !viewedVersionId}
                 placeholder={
-                  canEdit ? "Add a report-level note…" : "Activate or branch a draft to add notes."
+                  canEdit ? "Add a report-level note…" : "Activate the draft you need to add notes."
                 }
                 className="w-full rounded-md border px-3 py-2 text-sm font-sans disabled:opacity-50"
                 style={{
@@ -470,7 +678,7 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
                 workflowReadOnlyFinalized ||
                 addingNote ||
                 loadingDocument ||
-                !working ||
+                !viewedVersionId ||
                 noteText.trim().length === 0
               }
               className="rounded-md px-3 py-2 text-sm font-sans font-medium text-white disabled:opacity-50 shrink-0"
@@ -493,19 +701,8 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           actionError={null}
           caption={workingCaption}
           captionTone={captionTone}
-          workflow={
-            canEdit && !workflowReadOnlyFinalized
-              ? {
-                  onPatchState: handlePatchState,
-                  pendingItemId: patchingItemId,
-                  readOnly: false,
-                }
-              : {
-                  onPatchState: async () => {},
-                  pendingItemId: null,
-                  readOnly: true,
-                }
-          }
+          workflow={previewWorkflow}
+          manualNoteActions={manualNoteActions}
         />
       )}
     </section>

@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { updateDraftItem } from "@/lib/drafts/draft-service";
+import { deleteReportManualNoteItem, updateDraftItem } from "@/lib/drafts/draft-service";
 import type { DraftItemState } from "@/types/draft";
 import { NextResponse } from "next/server";
 
@@ -9,7 +9,7 @@ interface RouteParams {
 
 /**
  * PATCH /api/reports/[id]/draft-versions/[versionId]/items/[itemId]
- * Body: { state?: "included"|"excluded"|"review_needed", user_note?: string|null }
+ * Body: { state?, user_note?, display_text? } — display_text only for report REPORT_NOTES manual lines.
  */
 export async function PATCH(request: Request, { params }: RouteParams) {
   const { id: reportId, versionId, itemId } = await params;
@@ -30,7 +30,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const body = json as { state?: unknown; user_note?: unknown };
+  const body = json as { state?: unknown; user_note?: unknown; display_text?: unknown };
 
   let state: DraftItemState | undefined;
   if (body.state !== undefined) {
@@ -48,9 +48,18 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     user_note = body.user_note;
   }
 
+  let display_text: string | undefined;
+  if (body.display_text !== undefined) {
+    if (typeof body.display_text !== "string") {
+      return NextResponse.json({ error: "display_text must be a string" }, { status: 400 });
+    }
+    display_text = body.display_text;
+  }
+
   const result = await updateDraftItem(supabase, reportId, versionId, itemId, user.id, {
     state,
     user_note,
+    display_text,
   });
 
   if (!result.ok) {
@@ -58,4 +67,29 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   return NextResponse.json({ item: result.item });
+}
+
+/**
+ * DELETE /api/reports/[id]/draft-versions/[versionId]/items/[itemId]
+ * Report-level REPORT_NOTES manual notes only (active draft).
+ */
+export async function DELETE(_request: Request, { params }: RouteParams) {
+  const { id: reportId, versionId, itemId } = await params;
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const result = await deleteReportManualNoteItem(supabase, reportId, versionId, itemId, user.id);
+
+  if (!result.ok) {
+    return NextResponse.json({ error: result.message }, { status: result.status });
+  }
+
+  return NextResponse.json({ ok: true });
 }

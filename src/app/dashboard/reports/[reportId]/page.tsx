@@ -119,7 +119,7 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
 
       <ReportDraftWorkflow reportId={report.id} />
 
-      <SummarySelectionReview reportId={report.id} legacyCollapsed={hasDurableDraft} />
+      {!hasDurableDraft ? <SummarySelectionReview reportId={report.id} /> : null}
     </div>
   );
 }

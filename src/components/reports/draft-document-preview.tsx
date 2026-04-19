@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { SECTION_KEY_REPORT_NOTES } from "@/lib/drafts/draft-item-registry";
 import type { DraftItemState } from "@/types/draft";
 import type { DraftBlock, DraftDocument, DraftSection } from "@/types/draft-document";
 
@@ -20,6 +21,12 @@ export interface DraftWorkflowControls {
   readOnly: boolean;
 }
 
+export interface ManualNoteActions {
+  canEdit: boolean;
+  onSave: (draftItemId: string, displayText: string) => Promise<void>;
+  onDelete: (draftItemId: string) => Promise<void>;
+}
+
 export interface DraftDocumentPreviewProps {
   document: DraftDocument | null;
   error: string | null;
@@ -28,6 +35,7 @@ export interface DraftDocumentPreviewProps {
   caption?: string | null;
   captionTone?: "default" | "amber";
   workflow?: DraftWorkflowControls;
+  manualNoteActions?: ManualNoteActions;
 }
 
 type ExcludedEntry = { pathLabel: string; block: DraftBlock };
@@ -40,6 +48,148 @@ function displayText(block: DraftBlock): string {
 function displayLabel(block: DraftBlock): string | null {
   const l = block.displayPayload.label;
   return typeof l === "string" && l.trim() ? l : null;
+}
+
+function isReportManualNoteBlock(block: DraftBlock): boolean {
+  return (
+    block.blockType === "manual_note" &&
+    block.displayPayload.section_key === SECTION_KEY_REPORT_NOTES
+  );
+}
+
+function ReportManualNoteBlock({
+  block,
+  workflow,
+  manualNoteActions,
+}: {
+  block: DraftBlock;
+  workflow?: DraftWorkflowControls;
+  manualNoteActions?: ManualNoteActions;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(() => displayText(block));
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    setDraft(displayText(block));
+  }, [block]);
+
+  const label = displayLabel(block);
+  const showActions = manualNoteActions?.canEdit === true;
+
+  const save = async () => {
+    if (!manualNoteActions) return;
+    setSaving(true);
+    try {
+      await manualNoteActions.onSave(block.draftItemId, draft);
+      setEditing(false);
+    } catch {
+      // Parent workflow surfaces errors via actionError / alerts
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const del = async () => {
+    if (!manualNoteActions) return;
+    setDeleting(true);
+    try {
+      await manualNoteActions.onDelete(block.draftItemId);
+    } catch {
+      // Parent workflow surfaces errors via actionError / alerts
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const excludedLine = block.state === "excluded";
+
+  return (
+    <div className="space-y-1">
+      <div
+        className="rounded-md border px-3 py-2 text-sm font-sans"
+        style={{
+          borderColor: `${cr.steelBlue}55`,
+          backgroundColor: `${cr.midnight}ee`,
+          color: cr.chalk,
+        }}
+      >
+        <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: cr.slate }}>
+          Manual note
+        </p>
+        {label ? (
+          <span className="text-xs block mb-0.5" style={{ color: cr.slate }}>
+            {label}
+          </span>
+        ) : null}
+        {editing ? (
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={3}
+            className="w-full rounded border px-2 py-1.5 text-sm font-sans mt-1"
+            style={{ borderColor: cr.deepNavy, backgroundColor: cr.midnight, color: cr.chalk }}
+          />
+        ) : (
+          <p
+            className={`whitespace-pre-wrap wrap-break-word ${excludedLine ? "line-through opacity-80" : ""}`}
+          >
+            {displayText(block)}
+          </p>
+        )}
+        {showActions ? (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {editing ? (
+              <>
+                <button
+                  type="button"
+                  disabled={saving || draft.trim().length === 0}
+                  onClick={() => void save()}
+                  className="rounded px-2 py-1 text-[11px] font-sans font-medium text-white disabled:opacity-50"
+                  style={{ backgroundColor: cr.steelBlue }}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(false);
+                    setDraft(displayText(block));
+                  }}
+                  className="rounded border px-2 py-1 text-[11px] font-sans"
+                  style={{ borderColor: cr.deepNavy, color: cr.slate }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="rounded border px-2 py-1 text-[11px] font-sans"
+                  style={{ borderColor: cr.deepNavy, color: cr.chalk }}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => void del()}
+                  className="rounded px-2 py-1 text-[11px] font-sans text-red-300/90 disabled:opacity-50"
+                >
+                  {deleting ? "Deleting…" : "Delete"}
+                </button>
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+      {workflow ? <StateControls block={block} workflow={workflow} /> : null}
+    </div>
+  );
 }
 
 function collectExcluded(doc: DraftDocument): ExcludedEntry[] {
@@ -108,12 +258,20 @@ function StateControls({
 function DraftBlockView({
   block,
   workflow,
+  manualNoteActions,
 }: {
   block: DraftBlock;
   workflow?: DraftWorkflowControls;
+  manualNoteActions?: ManualNoteActions;
 }) {
   const label = displayLabel(block);
   const text = displayText(block);
+
+  if (isReportManualNoteBlock(block)) {
+    return (
+      <ReportManualNoteBlock block={block} workflow={workflow} manualNoteActions={manualNoteActions} />
+    );
+  }
 
   if (block.blockType === "warning") {
     return (
@@ -191,9 +349,11 @@ function DraftBlockView({
 function SectionBlocks({
   section,
   workflow,
+  manualNoteActions,
 }: {
   section: DraftSection;
   workflow?: DraftWorkflowControls;
+  manualNoteActions?: ManualNoteActions;
 }) {
   const visible = section.blocks.filter((b) => b.state !== "excluded");
   if (visible.length === 0) {
@@ -202,7 +362,12 @@ function SectionBlocks({
   return (
     <div className="space-y-2">
       {visible.map((block) => (
-        <DraftBlockView key={block.draftItemId} block={block} workflow={workflow} />
+        <DraftBlockView
+          key={block.draftItemId}
+          block={block}
+          workflow={workflow}
+          manualNoteActions={manualNoteActions}
+        />
       ))}
     </div>
   );
@@ -216,6 +381,7 @@ export function DraftDocumentPreview({
   caption,
   captionTone = "default",
   workflow,
+  manualNoteActions,
 }: DraftDocumentPreviewProps) {
   const [showExcluded, setShowExcluded] = useState(false);
 
@@ -348,7 +514,11 @@ export function DraftDocumentPreview({
                   <h4 className="text-sm font-serif" style={{ color: cr.chalk }}>
                     {sec.sectionLabel}
                   </h4>
-                  <SectionBlocks section={sec} workflow={workflow} />
+                  <SectionBlocks
+                    section={sec}
+                    workflow={workflow}
+                    manualNoteActions={manualNoteActions}
+                  />
                 </article>
               );
             })}
@@ -371,7 +541,11 @@ export function DraftDocumentPreview({
                   <h4 className="text-xs font-sans uppercase tracking-wide" style={{ color: cr.slate }}>
                     {sec.sectionLabel}
                   </h4>
-                  <SectionBlocks section={sec} workflow={workflow} />
+                  <SectionBlocks
+                    section={sec}
+                    workflow={workflow}
+                    manualNoteActions={manualNoteActions}
+                  />
                 </article>
               );
             })}
@@ -401,10 +575,20 @@ export function DraftDocumentPreview({
                     {pathLabel}
                   </span>
                   <div className="mt-1 space-y-1">
-                    <span className="line-through block" style={{ color: `${cr.slate}cc` }}>
-                      {displayText(block)}
-                    </span>
-                    {workflow ? <StateControls block={block} workflow={workflow} /> : null}
+                    {isReportManualNoteBlock(block) ? (
+                      <ReportManualNoteBlock
+                        block={block}
+                        workflow={workflow}
+                        manualNoteActions={manualNoteActions}
+                      />
+                    ) : (
+                      <>
+                        <span className="line-through block" style={{ color: `${cr.slate}cc` }}>
+                          {displayText(block)}
+                        </span>
+                        {workflow ? <StateControls block={block} workflow={workflow} /> : null}
+                      </>
+                    )}
                   </div>
                 </li>
               ))}

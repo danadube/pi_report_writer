@@ -5,6 +5,7 @@ import {
   describeCombinationRejection,
   isAllowedDraftItemCombination,
   MANUAL_ENTITY_KIND,
+  SECTION_KEY_REPORT_NOTES,
   validateManualDraftSectionKey,
 } from "@/lib/drafts/draft-item-registry";
 import {
@@ -718,7 +719,7 @@ export async function updateDraftItem(
   versionId: string,
   itemId: string,
   userId: string,
-  patch: { state?: DraftItemState; user_note?: string | null }
+  patch: { state?: DraftItemState; user_note?: string | null; display_text?: string }
 ): Promise<{ ok: true; item: ReportDraftItemDTO } | { ok: false; status: number; message: string }> {
   const gate = await assertOwnReport(supabase, reportId, userId);
   if (!gate.ok) {
@@ -774,6 +775,39 @@ export async function updateDraftItem(
     }
     update.user_note = n.value;
   }
+  if (patch.display_text !== undefined) {
+    const isReportManual =
+      existing.origin_type === "manual" &&
+      existing.entity_kind === MANUAL_ENTITY_KIND &&
+      existing.section_key === SECTION_KEY_REPORT_NOTES &&
+      existing.scope === "report";
+    if (!isReportManual) {
+      return {
+        ok: false,
+        status: 400,
+        message: "display_text can only be updated for report-level REPORT_NOTES manual notes.",
+      };
+    }
+    if (typeof patch.display_text !== "string") {
+      return { ok: false, status: 400, message: "display_text must be a string" };
+    }
+    const prev =
+      existing.display_payload != null &&
+      typeof existing.display_payload === "object" &&
+      !Array.isArray(existing.display_payload)
+        ? (existing.display_payload as Record<string, unknown>)
+        : {};
+    const merged = {
+      ...prev,
+      section_key: SECTION_KEY_REPORT_NOTES,
+      display_text: patch.display_text.trim(),
+    };
+    const disp = validateManualNoteDisplayPayload(merged, SECTION_KEY_REPORT_NOTES);
+    if (!disp.ok) {
+      return { ok: false, status: 400, message: disp.message };
+    }
+    update.display_payload = disp.value as unknown as Json;
+  }
 
   if (Object.keys(update).length === 0) {
     return { ok: true, item: toItemDto(existing) };
@@ -805,4 +839,92 @@ export async function updateDraftItem(
   });
 
   return { ok: true, item: toItemDto(row) };
+}
+
+/**
+ * Deletes a report-level REPORT_NOTES manual line (active draft only).
+ */
+export async function deleteReportManualNoteItem(
+  supabase: Supabase,
+  reportId: string,
+  versionId: string,
+  itemId: string,
+  userId: string
+): Promise<{ ok: true } | { ok: false; status: number; message: string }> {
+  const gate = await assertOwnReport(supabase, reportId, userId);
+  if (!gate.ok) {
+    return { ok: false, status: gate.status, message: gate.message };
+  }
+
+  const { data: ver, error: vErr } = await supabase
+    .from("report_draft_versions")
+    .select("status")
+    .eq("id", versionId)
+    .eq("report_id", reportId)
+    .maybeSingle();
+
+  if (vErr) {
+    return { ok: false, status: 500, message: vErr.message };
+  }
+  if (!ver) {
+    return { ok: false, status: 404, message: "Draft version not found" };
+  }
+  if (ver.status === "finalized") {
+    return { ok: false, status: 409, message: "Cannot modify a finalized draft version" };
+  }
+  if (ver.status !== "active") {
+    return {
+      ok: false,
+      status: 403,
+      message: "Only the active draft version can be edited.",
+    };
+  }
+
+  const { data: existing, error: exErr } = await supabase
+    .from("report_draft_items")
+    .select("*")
+    .eq("id", itemId)
+    .eq("draft_version_id", versionId)
+    .maybeSingle();
+
+  if (exErr) {
+    return { ok: false, status: 500, message: exErr.message };
+  }
+  if (!existing) {
+    return { ok: false, status: 404, message: "Draft item not found" };
+  }
+
+  const isReportManual =
+    existing.origin_type === "manual" &&
+    existing.entity_kind === MANUAL_ENTITY_KIND &&
+    existing.section_key === SECTION_KEY_REPORT_NOTES &&
+    existing.scope === "report";
+  if (!isReportManual) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Only report-level manual notes can be deleted with this endpoint.",
+    };
+  }
+
+  const { error: delErr } = await supabase
+    .from("report_draft_items")
+    .delete()
+    .eq("id", itemId)
+    .eq("draft_version_id", versionId);
+
+  if (delErr) {
+    return { ok: false, status: 500, message: delErr.message };
+  }
+
+  await insertDraftEvent(supabase, {
+    report_id: reportId,
+    draft_version_id: versionId,
+    draft_item_id: itemId,
+    event_type: "draft_item_deleted",
+    payload: { section_key: SECTION_KEY_REPORT_NOTES },
+    created_by: userId,
+  });
+
+  return { ok: true };
 }

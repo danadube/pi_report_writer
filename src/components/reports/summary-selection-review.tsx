@@ -6,8 +6,6 @@ import type { SummaryPrepPayload } from "@/types/summary-candidates";
 
 interface SummarySelectionReviewProps {
   reportId: string;
-  /** When true, summary-prep is secondary (durable draft is the primary workspace). */
-  legacyCollapsed?: boolean;
 }
 
 function initialSelection(payload: SummaryPrepPayload): Record<string, boolean> {
@@ -22,10 +20,7 @@ function initialSelection(payload: SummaryPrepPayload): Record<string, boolean> 
   return m;
 }
 
-export function SummarySelectionReview({
-  reportId,
-  legacyCollapsed = false,
-}: SummarySelectionReviewProps) {
+export function SummarySelectionReview({ reportId }: SummarySelectionReviewProps) {
   const [payload, setPayload] = useState<SummaryPrepPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,7 +124,7 @@ export function SummarySelectionReview({
     );
   }
 
-  const main = (
+  return (
     <section id="summary-selection" className="scroll-mt-10 space-y-4">
       <div>
         <h2 className="text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
@@ -224,18 +219,4 @@ export function SummarySelectionReview({
       <SummaryDraftPreview payload={payload} selected={selected} />
     </section>
   );
-
-  if (legacyCollapsed) {
-    return (
-      <details className="scroll-mt-10 rounded-lg border border-[#1A2E4A]/50 bg-[#0D1B2E]/35">
-        <summary className="cursor-pointer list-none px-4 py-3 font-sans text-sm text-[#4A5768] hover:text-[#F0EEE9]/85 [&::-webkit-details-marker]:hidden">
-          <span className="text-[10px] uppercase tracking-widest text-[#C8901A]/90 mr-2">Secondary</span>
-          Legacy summary-prep (client preview only, not the durable draft)
-        </summary>
-        <div className="border-t border-[#1A2E4A]/40 px-2 pb-2 pt-1">{main}</div>
-      </details>
-    );
-  }
-
-  return main;
 }
