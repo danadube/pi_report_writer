@@ -7,6 +7,8 @@ export type DraftDocument = {
   documentVersion: number;
   status: DraftVersionStatus;
   blockingWarnings: boolean;
+  /** True when address candidate rows predate the split address/date metadata payload marker. */
+  legacyAddressShape: boolean;
   reportSections: DraftSection[];
   subjects: DraftSubject[];
 };

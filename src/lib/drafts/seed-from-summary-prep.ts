@@ -1,3 +1,4 @@
+import { ADDRESS_PAYLOAD_FORMAT_SPLIT_V1 } from "@/lib/drafts/legacy-address-draft";
 import { SUMMARY_SECTION_ORDER } from "@/types/summary-candidates";
 import type { SummaryCandidate, SummaryPrepPayload } from "@/types/summary-candidates";
 
@@ -77,6 +78,9 @@ function buildDisplayPayload(c: SummaryCandidate): Record<string, unknown> {
   }
   if (c.ranking_score != null) {
     payload.ranking_score_hint = c.ranking_score;
+  }
+  if (c.entity_kind === "address") {
+    payload.address_payload_format = ADDRESS_PAYLOAD_FORMAT_SPLIT_V1;
   }
   const meta = c.address_date_metadata?.trim();
   if (meta) {

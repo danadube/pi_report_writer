@@ -239,6 +239,168 @@ export async function getAssembledDraftDocument(
   return { ok: true, document: doc };
 }
 
+/**
+ * Persists an assembled draft document snapshot and marks the version finalized (immutable).
+ * Requires the active draft with no blocking warnings.
+ */
+export async function finalizeDraftVersion(
+  supabase: Supabase,
+  reportId: string,
+  versionId: string,
+  userId: string
+): Promise<
+  | { ok: true; snapshotId: string; version: ReportDraftVersionDTO }
+  | { ok: false; status: number; message: string }
+> {
+  const gate = await assertOwnReport(supabase, reportId, userId);
+  if (!gate.ok) {
+    return { ok: false, status: gate.status, message: gate.message };
+  }
+
+  const { data: existingSnap, error: exSnapErr } = await supabase
+    .from("report_final_snapshots")
+    .select("id")
+    .eq("draft_version_id", versionId)
+    .eq("report_id", reportId)
+    .maybeSingle();
+
+  if (exSnapErr) {
+    return { ok: false, status: 500, message: exSnapErr.message };
+  }
+  if (existingSnap) {
+    return { ok: false, status: 409, message: "This draft version is already finalized." };
+  }
+
+  const assembled = await getAssembledDraftDocument(supabase, reportId, versionId, userId);
+  if (!assembled.ok) {
+    return { ok: false, status: assembled.status, message: assembled.message };
+  }
+
+  const doc = assembled.document;
+  if (doc.status !== "active") {
+    return {
+      ok: false,
+      status: 409,
+      message:
+        doc.status === "finalized"
+          ? "This draft version is already finalized."
+          : "Only the active draft version can be finalized.",
+    };
+  }
+  if (doc.blockingWarnings) {
+    return {
+      ok: false,
+      status: 409,
+      message: "Clear blocking warnings before finalizing this draft.",
+    };
+  }
+
+  const snapshotPayload = doc as unknown as Json;
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("report_final_snapshots")
+    .insert({
+      report_id: reportId,
+      draft_version_id: versionId,
+      snapshot_payload: snapshotPayload,
+      created_by: userId,
+    })
+    .select("id")
+    .single();
+
+  if (insErr || !inserted) {
+    return { ok: false, status: 500, message: insErr?.message ?? "Could not finalize draft" };
+  }
+
+  const { data: updated, error: upErr } = await supabase
+    .from("report_draft_versions")
+    .update({
+      status: "finalized",
+      finalized_at: new Date().toISOString(),
+    })
+    .eq("id", versionId)
+    .eq("report_id", reportId)
+    .eq("status", "active")
+    .select()
+    .single();
+
+  if (upErr || !updated) {
+    await supabase.from("report_final_snapshots").delete().eq("id", inserted.id);
+    return {
+      ok: false,
+      status: 409,
+      message: upErr?.message ?? "Could not finalize draft (version may no longer be active).",
+    };
+  }
+
+  await insertDraftEvent(supabase, {
+    report_id: reportId,
+    draft_version_id: versionId,
+    draft_item_id: null,
+    event_type: "draft_version_finalized",
+    payload: { snapshot_id: inserted.id },
+    created_by: userId,
+  });
+
+  return { ok: true, snapshotId: inserted.id, version: toVersionDto(updated) };
+}
+
+/** Returns the persisted final snapshot row for a finalized draft version (inspection / integrity). */
+export async function getFinalSnapshotForDraftVersion(
+  supabase: Supabase,
+  reportId: string,
+  versionId: string,
+  userId: string
+): Promise<
+  | { ok: true; snapshot: { id: string; snapshot_payload: Json; created_at: string } }
+  | { ok: false; status: number; message: string }
+> {
+  const gate = await assertOwnReport(supabase, reportId, userId);
+  if (!gate.ok) {
+    return { ok: false, status: gate.status, message: gate.message };
+  }
+
+  const { data: ver, error: vErr } = await supabase
+    .from("report_draft_versions")
+    .select("id, status")
+    .eq("id", versionId)
+    .eq("report_id", reportId)
+    .maybeSingle();
+
+  if (vErr) {
+    return { ok: false, status: 500, message: vErr.message };
+  }
+  if (!ver) {
+    return { ok: false, status: 404, message: "Draft version not found" };
+  }
+  if (ver.status !== "finalized") {
+    return { ok: false, status: 404, message: "No final snapshot for this draft version" };
+  }
+
+  const { data: snap, error: sErr } = await supabase
+    .from("report_final_snapshots")
+    .select("id, snapshot_payload, created_at")
+    .eq("draft_version_id", versionId)
+    .eq("report_id", reportId)
+    .maybeSingle();
+
+  if (sErr) {
+    return { ok: false, status: 500, message: sErr.message };
+  }
+  if (!snap) {
+    return { ok: false, status: 404, message: "Final snapshot not found" };
+  }
+
+  return {
+    ok: true,
+    snapshot: {
+      id: snap.id,
+      snapshot_payload: snap.snapshot_payload,
+      created_at: snap.created_at,
+    },
+  };
+}
+
 async function insertDraftEvent(
   supabase: Supabase,
   row: Database["public"]["Tables"]["report_draft_events"]["Insert"]

@@ -79,6 +79,7 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   const [creating, setCreating] = useState(false);
   const [branchingId, setBranchingId] = useState<string | null>(null);
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [finalizingId, setFinalizingId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [addingNote, setAddingNote] = useState(false);
   const [patchingItemId, setPatchingItemId] = useState<string | null>(null);
@@ -243,6 +244,31 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
       setActionError("Branch failed.");
     } finally {
       setBranchingId(null);
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!viewedVersionId || !viewedVersion || viewedVersion.status !== "active") {
+      return;
+    }
+    setFinalizingId(viewedVersionId);
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/reports/${reportId}/draft-versions/${viewedVersionId}/finalize`,
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(j.error ?? `Finalize failed (${res.status}).`);
+        return;
+      }
+      await loadVersions();
+      await loadDocument(viewedVersionId);
+    } catch {
+      setActionError("Finalize failed.");
+    } finally {
+      setFinalizingId(null);
     }
   };
 
@@ -666,6 +692,36 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           </p>
         ) : null}
 
+        {document?.legacyAddressShape && viewedVersionId && !loadingDocument ? (
+          <div
+            className="rounded-md border px-3 py-2.5 text-sm font-sans leading-relaxed"
+            style={{
+              borderColor: `${cr.slate}44`,
+              backgroundColor: `${cr.deepNavy}66`,
+              color: `${cr.chalk}ee`,
+            }}
+            role="status"
+          >
+            <p>
+              This draft was built before address lines used separate date metadata. Address text here may
+              combine location and dates in one field.
+            </p>
+            <p className="text-xs mt-1.5" style={{ color: cr.slate }}>
+              Creating a new version from current summary prep uses the improved format. Existing rows are
+              not changed in place.
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleCreateDraft()}
+              disabled={creating || loadingDocument}
+              className="mt-2 rounded-md px-3 py-1.5 text-xs font-sans font-medium text-white disabled:opacity-50"
+              style={{ backgroundColor: cr.steelBlue }}
+            >
+              {creating ? "Creating…" : "Create refreshed version"}
+            </button>
+          </div>
+        ) : null}
+
         {!canEdit && viewedVersion && !workflowReadOnlyFinalized ? (
           <div
             className="rounded-md border px-3 py-2.5 text-sm font-sans"
@@ -682,10 +738,59 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           </div>
         ) : null}
 
+        {isViewingActive && viewedVersion?.status === "active" && !workflowReadOnlyFinalized ? (
+          <div
+            className="rounded-md border px-3 py-2.5 font-sans text-sm space-y-2"
+            style={{
+              borderColor: `${cr.steelBlue}44`,
+              backgroundColor: `${cr.midnight}aa`,
+            }}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="text-xs leading-snug" style={{ color: cr.chalk }}>
+                Finalize locks this version, saves a durable snapshot of the assembled draft, and disables
+                further edits.
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleFinalize()}
+                disabled={
+                  finalizingId === viewedVersionId ||
+                  loadingDocument ||
+                  viewedVersion.has_blocking_warnings
+                }
+                className="rounded-md px-3 py-1.5 text-xs font-sans font-medium text-white shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor:
+                    viewedVersion.has_blocking_warnings ? `${cr.slate}88` : cr.steelBlue,
+                }}
+              >
+                {finalizingId === viewedVersionId ? "Finalizing…" : "Finalize draft"}
+              </button>
+            </div>
+            {viewedVersion.has_blocking_warnings ? (
+              <p className="text-xs" style={{ color: cr.gold }}>
+                Blocking warnings must be cleared before you can finalize (for example, resolve stale
+                extraction notices in the review queue).
+              </p>
+            ) : (
+              <p className="text-xs" style={{ color: `${cr.slate}dd` }}>
+                No blocking warnings on this version — you can finalize when the draft is ready.
+              </p>
+            )}
+          </div>
+        ) : null}
+
         {workflowReadOnlyFinalized ? (
-          <p className="text-sm font-sans" style={{ color: cr.slate }}>
-            This draft version is finalized and cannot be edited.
-          </p>
+          <div className="space-y-1">
+            <p className="text-sm font-sans" style={{ color: cr.slate }}>
+              This draft version is finalized and cannot be edited.
+            </p>
+            <p className="text-xs font-sans leading-relaxed" style={{ color: `${cr.slate}bb` }}>
+              A final snapshot of the assembled draft was stored when this version was finalized. Editing
+              other drafts does not change that snapshot.
+            </p>
+          </div>
         ) : null}
 
         <div

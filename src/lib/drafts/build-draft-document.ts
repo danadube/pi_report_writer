@@ -3,6 +3,7 @@ import {
   SECTION_KEY_SYSTEM_WARNINGS,
   sectionLabelForKey,
 } from "@/lib/drafts/draft-item-registry";
+import { detectLegacyAddressDraftShape } from "@/lib/drafts/legacy-address-draft";
 import type { ReportDraftItemDTO, ReportDraftVersionDTO } from "@/types/draft";
 import type { DraftBlock, DraftDocument, DraftSection, DraftSubject } from "@/types/draft-document";
 import { SUMMARY_SECTION_ORDER } from "@/types/summary-candidates";
@@ -115,6 +116,7 @@ export function buildDraftDocument(
     documentVersion: version.version_number,
     status: version.status,
     blockingWarnings: version.has_blocking_warnings,
+    legacyAddressShape: detectLegacyAddressDraftShape(items),
     reportSections,
     subjects,
   };

@@ -5,6 +5,7 @@ import {
   SECTION_KEY_SYSTEM_WARNINGS,
   type DraftItemOriginType,
 } from "@/lib/drafts/draft-item-registry";
+import { ADDRESS_PAYLOAD_FORMAT_SPLIT_V1 } from "@/lib/drafts/legacy-address-draft";
 import type { SummarySectionId } from "@/types/summary-candidates";
 
 const MAX_TEXT = 16000;
@@ -68,12 +69,21 @@ export function validateCandidateSeedDisplayPayload(
       };
     }
   }
+  if (o.address_payload_format != null) {
+    if (o.address_payload_format !== ADDRESS_PAYLOAD_FORMAT_SPLIT_V1) {
+      return {
+        ok: false,
+        message: `display_payload.address_payload_format must be "${ADDRESS_PAYLOAD_FORMAT_SPLIT_V1}" or omitted`,
+      };
+    }
+  }
   const allowed = new Set([
     "section_key",
     "display_text",
     "label",
     "ranking_score_hint",
     "address_date_metadata",
+    "address_payload_format",
   ]);
   for (const k of Object.keys(o)) {
     if (!allowed.has(k)) {
