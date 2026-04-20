@@ -127,7 +127,7 @@ function ReportManualNoteBlock({
         }}
       >
         <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: cr.slate }}>
-          Manual note
+          Manual note · composing the report
         </p>
         {label ? (
           <span className="text-xs block mb-0.5" style={{ color: cr.slate }}>
@@ -349,7 +349,7 @@ function DraftBlockView({
       >
         {isManual ? (
           <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: cr.slate }}>
-            Manual note
+            Manual note · composing the report
           </p>
         ) : null}
         {label ? (
@@ -466,7 +466,7 @@ export function DraftDocumentPreview({
           Draft preview
         </h2>
         <p className="text-xs font-sans mt-1 leading-relaxed" style={{ color: cr.slate }}>
-          Assembled from GET /document. Server truth for structure and line state.
+          Your assembled report—compose line state and manual notes here, then finalize when ready.
         </p>
         {caption ? (
           <p
@@ -476,7 +476,10 @@ export function DraftDocumentPreview({
             {caption}
           </p>
         ) : null}
-        <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] font-sans" style={{ color: cr.slate }}>
+        <dl
+          className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[10px] font-sans opacity-90"
+          style={{ color: cr.slate }}
+        >
           <div className="flex gap-1.5">
             <dt>Version</dt>
             <dd className="tabular-nums" style={{ color: cr.chalk }}>

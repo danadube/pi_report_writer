@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DraftDocumentPreview } from "@/components/reports/draft-document-preview";
 import { collectDraftReviewPanelEntries } from "@/lib/drafts/collect-draft-review-entries";
 import type { DraftItemState, DraftVersionStatus, ReportDraftVersionDTO } from "@/types/draft";
@@ -48,6 +48,82 @@ function formatVersionTimestamp(iso: string | null | undefined): string {
   } catch {
     return iso;
   }
+}
+
+function WorkflowStepHeaderStep({
+  title,
+  status,
+  emphasize,
+}: {
+  title: string;
+  status: string;
+  emphasize?: boolean;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-0.5 min-w-[7.5rem] sm:min-w-0 sm:flex-1 rounded-md border px-3 py-2"
+      style={{
+        borderColor: emphasize ? `${cr.steelBlue}88` : cr.deepNavy,
+        backgroundColor: emphasize ? `${cr.deepNavy}aa` : `${cr.midnight}99`,
+      }}
+    >
+      <p className="text-[10px] font-sans font-semibold uppercase tracking-widest" style={{ color: cr.slate }}>
+        {title}
+      </p>
+      <p className="text-sm font-sans font-medium" style={{ color: cr.chalk }}>
+        {status}
+      </p>
+    </div>
+  );
+}
+
+function WorkflowStepHeader({
+  reviewLabel,
+  composeLabel,
+  finalizeLabel,
+}: {
+  reviewLabel: string;
+  composeLabel: string;
+  finalizeLabel: string;
+}) {
+  return (
+    <div
+      className="rounded-lg border px-3 py-3 font-sans"
+      style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.midnight}dd` }}
+      aria-label="Workflow steps: Review, Compose, Finalize (status only, not navigation)"
+    >
+      <p className="text-[10px] uppercase tracking-widest mb-2" style={{ color: `${cr.slate}cc` }}>
+        Guided workflow
+      </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-2">
+        <WorkflowStepHeaderStep
+          title="Review"
+          status={reviewLabel}
+          emphasize={reviewLabel !== "Clear"}
+        />
+        <div
+          className="hidden sm:flex items-center justify-center text-lg leading-none pb-1"
+          style={{ color: `${cr.slate}99` }}
+          aria-hidden
+        >
+          →
+        </div>
+        <WorkflowStepHeaderStep title="Compose" status={composeLabel} />
+        <div
+          className="hidden sm:flex items-center justify-center text-lg leading-none pb-1"
+          style={{ color: `${cr.slate}99` }}
+          aria-hidden
+        >
+          →
+        </div>
+        <WorkflowStepHeaderStep
+          title="Finalize"
+          status={finalizeLabel}
+          emphasize={finalizeLabel === "Blocked"}
+        />
+      </div>
+    </div>
+  );
 }
 
 function statusBadgeLabel(status: DraftVersionStatus): string {
@@ -112,6 +188,64 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   const workflowReadOnlyFinalized = viewedVersion != null && viewedVersion.status === "finalized";
 
   const reviewEntries = useMemo(() => collectDraftReviewPanelEntries(document), [document]);
+
+  const prioritizeReviewScrollRef = useRef(false);
+
+  const stepReviewLabel = useMemo(() => {
+    const rn = viewedVersion?.review_needed_count ?? 0;
+    const w = viewedVersion?.warning_count ?? 0;
+    if (rn > 0 || w > 0) {
+      return `${rn + w} open`;
+    }
+    if (document && reviewEntries.length > 0) {
+      return `${reviewEntries.length} open`;
+    }
+    return "Clear";
+  }, [viewedVersion, document, reviewEntries.length]);
+
+  const stepComposeLabel = useMemo(() => {
+    if (viewedVersion?.status === "finalized") {
+      return "Done";
+    }
+    return "In progress";
+  }, [viewedVersion?.status]);
+
+  const stepFinalizeLabel = useMemo(() => {
+    if (viewedVersion?.status === "finalized") {
+      return "Done";
+    }
+    const blocking =
+      document?.blockingWarnings ?? viewedVersion?.has_blocking_warnings ?? false;
+    return blocking ? "Blocked" : "Ready";
+  }, [viewedVersion?.status, viewedVersion?.has_blocking_warnings, document?.blockingWarnings]);
+
+  useEffect(() => {
+    prioritizeReviewScrollRef.current = false;
+  }, [viewedVersionId]);
+
+  useEffect(() => {
+    if (loadingDocument || !document) {
+      return;
+    }
+    if (prioritizeReviewScrollRef.current) {
+      return;
+    }
+    const shouldScroll =
+      document.status === "stale" ||
+      reviewEntries.length > 0 ||
+      document.blockingWarnings === true;
+    if (!shouldScroll) {
+      return;
+    }
+    prioritizeReviewScrollRef.current = true;
+    const frame = requestAnimationFrame(() => {
+      globalThis.document.getElementById(REVIEW_PANEL_ID)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loadingDocument, document, reviewEntries.length]);
 
   const scrollToReviewPanel = useCallback(() => {
     globalThis.document.getElementById(REVIEW_PANEL_ID)?.scrollIntoView({
@@ -431,6 +565,9 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
         }
       : undefined;
 
+  const blockingForFinalize =
+    document?.blockingWarnings ?? viewedVersion?.has_blocking_warnings ?? false;
+
   if (loadingList && versions === null) {
     return (
       <section className="scroll-mt-10" aria-labelledby="draft-workflow-heading">
@@ -500,24 +637,270 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
   }
 
   return (
-    <section className="scroll-mt-10 space-y-4" aria-labelledby="draft-workflow-heading">
-      <div
-        className="rounded-xl border p-5 space-y-4"
-        style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.midnight}f2` }}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2
-              id="draft-workflow-heading"
-              className="font-serif text-lg font-normal"
-              style={{ color: cr.chalk }}
+    <section className="scroll-mt-10 space-y-6" aria-labelledby="draft-workflow-heading">
+      <h2 id="draft-workflow-heading" className="sr-only">
+        Report workspace
+      </h2>
+
+      <WorkflowStepHeader
+        reviewLabel={stepReviewLabel}
+        composeLabel={stepComposeLabel}
+        finalizeLabel={stepFinalizeLabel}
+      />
+
+      <div className="space-y-3">
+        <div
+          className="rounded-2xl p-1 sm:p-1.5"
+          style={{
+            boxShadow: "0 16px 48px rgba(0,0,0,0.38)",
+            background: `linear-gradient(155deg, ${cr.steelBlue}40 0%, ${cr.midnight} 55%, ${cr.deepNavy} 100%)`,
+          }}
+        >
+          {loadingDocument && !document && !documentLoadError ? (
+            <div
+              className="rounded-xl px-6 py-10 text-sm font-sans text-center"
+              style={{ color: cr.slate, backgroundColor: `${cr.midnight}f2` }}
             >
-              Report workspace
-            </h2>
-            <p className="text-[10px] font-sans uppercase tracking-widest mt-1" style={{ color: cr.gold }}>
-              Durable draft
+              Loading draft document…
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden" style={{ backgroundColor: `${cr.midnight}f2` }}>
+              <DraftDocumentPreview
+                document={document}
+                error={documentLoadError}
+                actionError={null}
+                caption={workingCaption}
+                captionTone={captionTone}
+                workflow={previewWorkflow}
+                manualNoteActions={manualNoteActions}
+                jumpToReviewQueue={
+                  document?.status === "stale" && reviewEntries.length > 0
+                    ? { count: reviewEntries.length, onJump: scrollToReviewPanel }
+                    : undefined
+                }
+              />
+            </div>
+          )}
+        </div>
+
+        {workflowReadOnlyFinalized ? (
+          <div
+            className="rounded-md border px-3 py-2.5 font-sans text-sm space-y-1"
+            style={{
+              borderColor: `${cr.deepNavy}`,
+              backgroundColor: `${cr.midnight}aa`,
+              color: cr.slate,
+            }}
+          >
+            <p>This draft version is finalized and cannot be edited.</p>
+            <p className="text-xs leading-relaxed" style={{ color: `${cr.slate}bb` }}>
+              A final snapshot was stored when this version was finalized.
             </p>
           </div>
+        ) : null}
+
+        {isViewingActive && viewedVersion?.status === "active" && !workflowReadOnlyFinalized ? (
+          <div
+            className="rounded-lg border px-4 py-3 font-sans text-sm space-y-2"
+            style={{
+              borderColor: `${cr.steelBlue}55`,
+              backgroundColor: `${cr.midnight}dd`,
+            }}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1 min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: cr.gold }}>
+                  Finalize
+                </p>
+                <p className="text-xs leading-snug" style={{ color: cr.chalk }}>
+                  When the preview reflects the report you want, finalize to lock this version and save a
+                  durable snapshot.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleFinalize()}
+                disabled={
+                  finalizingId === viewedVersionId || loadingDocument || blockingForFinalize
+                }
+                className="rounded-md px-4 py-2 text-sm font-sans font-medium text-white shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: blockingForFinalize ? `${cr.slate}88` : cr.steelBlue,
+                }}
+                aria-describedby={blockingForFinalize ? "finalize-blocked-hint" : undefined}
+                title={
+                  blockingForFinalize
+                    ? "Resolve blocking warnings in Review before finalizing."
+                    : undefined
+                }
+              >
+                {finalizingId === viewedVersionId ? "Finalizing…" : "Finalize draft"}
+              </button>
+            </div>
+            {blockingForFinalize ? (
+              <p className="text-xs leading-snug" style={{ color: cr.gold }} id="finalize-blocked-hint">
+                Finalize is disabled until blocking warnings are cleared—use the Review queue below (or inline
+                in the preview) to resolve extraction notices and review-needed lines.
+              </p>
+            ) : (
+              <p className="text-xs leading-snug" style={{ color: `${cr.slate}cc` }}>
+                No blocking warnings—finalize when the assembled draft is ready.
+              </p>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        id={REVIEW_PANEL_ID}
+        className="scroll-mt-10 rounded-lg border p-4 space-y-3"
+        style={{
+          borderColor: reviewEntries.length === 0 ? `${cr.deepNavy}99` : `${cr.gold}44`,
+          backgroundColor: reviewEntries.length === 0 ? `${cr.midnight}aa` : `${cr.midnight}ee`,
+        }}
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="font-serif text-base font-normal" style={{ color: cr.chalk }}>
+              Review queue
+            </h3>
+            <p className="text-xs font-sans mt-1" style={{ color: `${cr.slate}dd` }}>
+              Fix extraction notices and review-needed lines so the report is accurate before you finalize.
+            </p>
+          </div>
+          <span className="text-xs font-medium tabular-nums font-sans" style={{ color: cr.gold }}>
+            {reviewEntries.length === 0 ? "Clear" : `${reviewEntries.length} open`}
+          </span>
+        </div>
+        {reviewEntries.length === 0 ? (
+          <p className="text-sm font-sans" style={{ color: cr.slate }}>
+            Nothing is waiting for a decision—continue composing in the preview above.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {(
+              [
+                ["extraction_warning", "Extraction & system notices"],
+                ["review_needed_fact", "Facts requiring a decision"],
+              ] as const
+            ).map(([group, label]) => {
+              const rows = reviewEntries.filter((e) => e.group === group);
+              if (rows.length === 0) return null;
+              return (
+                <div key={group}>
+                  <p
+                    className="text-[10px] font-sans uppercase tracking-widest mb-2"
+                    style={{ color: cr.slate }}
+                  >
+                    {label}
+                  </p>
+                  <ul className="space-y-2">
+                    {rows.map((e) => {
+                      const text =
+                        typeof e.block.displayPayload.display_text === "string"
+                          ? e.block.displayPayload.display_text
+                          : "";
+                      const periodMeta =
+                        e.block.entityKind === "address" &&
+                        typeof e.block.displayPayload.address_date_metadata === "string"
+                          ? e.block.displayPayload.address_date_metadata.trim()
+                          : "";
+                      return (
+                        <li
+                          key={e.block.draftItemId}
+                          className="rounded-md border px-3 py-2.5 font-sans"
+                          style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.deepNavy}55` }}
+                        >
+                          <p className="text-[10px] uppercase tracking-wide mb-1" style={{ color: cr.slate }}>
+                            {e.pathLabel}
+                          </p>
+                          <p className="text-sm whitespace-pre-wrap wrap-break-word" style={{ color: cr.chalk }}>
+                            {text}
+                          </p>
+                          {periodMeta ? (
+                            <p className="text-xs mt-1 whitespace-pre-wrap" style={{ color: cr.slate }}>
+                              {periodMeta}
+                            </p>
+                          ) : null}
+                          <p className="text-xs mt-1" style={{ color: cr.slate }}>
+                            State:{" "}
+                            <span style={{ color: cr.gold }}>{e.block.state}</span>
+                          </p>
+                          {canEdit && !workflowReadOnlyFinalized ? (
+                            <div
+                              className="flex flex-wrap gap-1.5 mt-3 pt-2 border-t font-sans"
+                              style={{ borderColor: cr.deepNavy }}
+                            >
+                              <button
+                                type="button"
+                                disabled={patchingItemId === e.block.draftItemId}
+                                onClick={() => void handlePatchState(e.block.draftItemId, "included")}
+                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+                                style={{
+                                  borderWidth: 1,
+                                  borderStyle: "solid",
+                                  borderColor: `${cr.steelBlue}88`,
+                                  color: cr.chalk,
+                                }}
+                              >
+                                Include
+                              </button>
+                              <button
+                                type="button"
+                                disabled={patchingItemId === e.block.draftItemId}
+                                onClick={() => void handlePatchState(e.block.draftItemId, "excluded")}
+                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+                                style={{
+                                  borderWidth: 1,
+                                  borderStyle: "solid",
+                                  borderColor: `${cr.steelBlue}88`,
+                                  color: cr.chalk,
+                                }}
+                              >
+                                Exclude
+                              </button>
+                              <button
+                                type="button"
+                                disabled={patchingItemId === e.block.draftItemId}
+                                onClick={() => void handlePatchState(e.block.draftItemId, "review_needed")}
+                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
+                                style={{
+                                  borderWidth: 1,
+                                  borderStyle: "solid",
+                                  borderColor: `${cr.steelBlue}88`,
+                                  color: cr.chalk,
+                                }}
+                              >
+                                Review
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-xs mt-2" style={{ color: `${cr.slate}cc` }}>
+                              Activate this version to resolve items from the queue or inline in the preview.
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div
+        className="rounded-xl border p-5 space-y-4"
+        style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.midnight}e6` }}
+      >
+        <div>
+          <h3 className="font-serif text-base font-normal" style={{ color: cr.chalk }}>
+            Draft versions & notes
+          </h3>
+          <p className="text-[10px] font-sans uppercase tracking-widest mt-1" style={{ color: `${cr.slate}cc` }}>
+            Switch versions · add report-level notes
+          </p>
         </div>
 
         <div
@@ -617,26 +1000,6 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
                         ) : null}
                       </div>
                       <div className="flex flex-wrap gap-1.5 justify-end shrink-0">
-                        {v.status === "stale" ? (
-                          <button
-                            type="button"
-                            disabled={loadingDocument}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              scrollToReviewPanel();
-                            }}
-                            className="rounded px-2 py-1 text-[10px] font-sans font-medium disabled:opacity-50"
-                            style={{
-                              borderWidth: 1,
-                              borderStyle: "solid",
-                              borderColor: `${cr.gold}88`,
-                              color: cr.gold,
-                              backgroundColor: `${cr.deepNavy}cc`,
-                            }}
-                          >
-                            Review
-                          </button>
-                        ) : null}
                         {showActivate ? (
                           <button
                             type="button"
@@ -738,67 +1101,15 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           </div>
         ) : null}
 
-        {isViewingActive && viewedVersion?.status === "active" && !workflowReadOnlyFinalized ? (
-          <div
-            className="rounded-md border px-3 py-2.5 font-sans text-sm space-y-2"
-            style={{
-              borderColor: `${cr.steelBlue}44`,
-              backgroundColor: `${cr.midnight}aa`,
-            }}
-          >
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <p className="text-xs leading-snug" style={{ color: cr.chalk }}>
-                Finalize locks this version, saves a durable snapshot of the assembled draft, and disables
-                further edits.
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleFinalize()}
-                disabled={
-                  finalizingId === viewedVersionId ||
-                  loadingDocument ||
-                  viewedVersion.has_blocking_warnings
-                }
-                className="rounded-md px-3 py-1.5 text-xs font-sans font-medium text-white shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  backgroundColor:
-                    viewedVersion.has_blocking_warnings ? `${cr.slate}88` : cr.steelBlue,
-                }}
-              >
-                {finalizingId === viewedVersionId ? "Finalizing…" : "Finalize draft"}
-              </button>
-            </div>
-            {viewedVersion.has_blocking_warnings ? (
-              <p className="text-xs" style={{ color: cr.gold }}>
-                Blocking warnings must be cleared before you can finalize (for example, resolve stale
-                extraction notices in the review queue).
-              </p>
-            ) : (
-              <p className="text-xs" style={{ color: `${cr.slate}dd` }}>
-                No blocking warnings on this version — you can finalize when the draft is ready.
-              </p>
-            )}
-          </div>
-        ) : null}
-
-        {workflowReadOnlyFinalized ? (
-          <div className="space-y-1">
-            <p className="text-sm font-sans" style={{ color: cr.slate }}>
-              This draft version is finalized and cannot be edited.
-            </p>
-            <p className="text-xs font-sans leading-relaxed" style={{ color: `${cr.slate}bb` }}>
-              A final snapshot of the assembled draft was stored when this version was finalized. Editing
-              other drafts does not change that snapshot.
-            </p>
-          </div>
-        ) : null}
-
         <div
           className="rounded-lg border p-4 space-y-2"
           style={{ borderColor: `${cr.deepNavy}`, backgroundColor: `${cr.deepNavy}55` }}
         >
           <p className="text-[10px] font-sans font-semibold uppercase tracking-widest" style={{ color: cr.slate }}>
-            Report notes
+            Compose · report notes
+          </p>
+          <p className="text-xs font-sans" style={{ color: `${cr.slate}bb` }}>
+            Add narrative that belongs in the report body (not the review queue).
           </p>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
             <label className="flex-1 block">
@@ -838,158 +1149,6 @@ export function ReportDraftWorkflow({ reportId }: ReportDraftWorkflowProps) {
           </div>
         </div>
       </div>
-
-      <div
-        id={REVIEW_PANEL_ID}
-        className="scroll-mt-10 rounded-lg border p-4 space-y-3"
-        style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.midnight}ee` }}
-      >
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="font-serif text-base font-normal" style={{ color: cr.chalk }}>
-            Review required
-          </h3>
-          <span className="text-xs font-medium tabular-nums font-sans" style={{ color: cr.gold }}>
-            {reviewEntries.length === 0 ? "Clear" : `${reviewEntries.length} open`}
-          </span>
-        </div>
-        {reviewEntries.length === 0 ? (
-          <p className="text-sm font-sans" style={{ color: cr.slate }}>
-            Nothing is waiting for a decision in this version&apos;s assembled document.
-          </p>
-        ) : (
-          <div className="space-y-4">
-            {(
-              [
-                ["extraction_warning", "Extraction & system notices"],
-                ["review_needed_fact", "Facts requiring a decision"],
-              ] as const
-            ).map(([group, label]) => {
-              const rows = reviewEntries.filter((e) => e.group === group);
-              if (rows.length === 0) return null;
-              return (
-                <div key={group}>
-                  <p
-                    className="text-[10px] font-sans uppercase tracking-widest mb-2"
-                    style={{ color: cr.slate }}
-                  >
-                    {label}
-                  </p>
-                  <ul className="space-y-2">
-                    {rows.map((e) => {
-                      const text =
-                        typeof e.block.displayPayload.display_text === "string"
-                          ? e.block.displayPayload.display_text
-                          : "";
-                      const periodMeta =
-                        e.block.entityKind === "address" &&
-                        typeof e.block.displayPayload.address_date_metadata === "string"
-                          ? e.block.displayPayload.address_date_metadata.trim()
-                          : "";
-                      return (
-                        <li
-                          key={e.block.draftItemId}
-                          className="rounded-md border px-3 py-2.5 font-sans"
-                          style={{ borderColor: cr.deepNavy, backgroundColor: `${cr.deepNavy}55` }}
-                        >
-                          <p className="text-[10px] uppercase tracking-wide mb-1" style={{ color: cr.slate }}>
-                            {e.pathLabel}
-                          </p>
-                          <p className="text-sm whitespace-pre-wrap wrap-break-word" style={{ color: cr.chalk }}>
-                            {text}
-                          </p>
-                          {periodMeta ? (
-                            <p className="text-xs mt-1 whitespace-pre-wrap" style={{ color: cr.slate }}>
-                              {periodMeta}
-                            </p>
-                          ) : null}
-                          <p className="text-xs mt-1" style={{ color: cr.slate }}>
-                            State:{" "}
-                            <span style={{ color: cr.gold }}>{e.block.state}</span>
-                          </p>
-                          {canEdit && !workflowReadOnlyFinalized ? (
-                            <div
-                              className="flex flex-wrap gap-1.5 mt-3 pt-2 border-t font-sans"
-                              style={{ borderColor: cr.deepNavy }}
-                            >
-                              <button
-                                type="button"
-                                disabled={patchingItemId === e.block.draftItemId}
-                                onClick={() => void handlePatchState(e.block.draftItemId, "included")}
-                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
-                                style={{
-                                  borderWidth: 1,
-                                  borderStyle: "solid",
-                                  borderColor: `${cr.steelBlue}88`,
-                                  color: cr.chalk,
-                                }}
-                              >
-                                Include
-                              </button>
-                              <button
-                                type="button"
-                                disabled={patchingItemId === e.block.draftItemId}
-                                onClick={() => void handlePatchState(e.block.draftItemId, "excluded")}
-                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
-                                style={{
-                                  borderWidth: 1,
-                                  borderStyle: "solid",
-                                  borderColor: `${cr.steelBlue}88`,
-                                  color: cr.chalk,
-                                }}
-                              >
-                                Exclude
-                              </button>
-                              <button
-                                type="button"
-                                disabled={patchingItemId === e.block.draftItemId}
-                                onClick={() => void handlePatchState(e.block.draftItemId, "review_needed")}
-                                className="rounded px-2 py-1 text-xs font-medium disabled:opacity-50"
-                                style={{
-                                  borderWidth: 1,
-                                  borderStyle: "solid",
-                                  borderColor: `${cr.steelBlue}88`,
-                                  color: cr.chalk,
-                                }}
-                              >
-                                Keep as review needed
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="text-xs mt-2" style={{ color: `${cr.slate}cc` }}>
-                              Activate this version to edit items from the queue or inline preview.
-                            </p>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {loadingDocument && !document && !documentLoadError ? (
-        <p className="text-sm font-sans pl-1" style={{ color: cr.slate }}>
-          Loading draft document…
-        </p>
-      ) : (
-        <DraftDocumentPreview
-          document={document}
-          error={documentLoadError}
-          actionError={null}
-          caption={workingCaption}
-          captionTone={captionTone}
-          workflow={previewWorkflow}
-          manualNoteActions={manualNoteActions}
-          jumpToReviewQueue={
-            document?.status === "stale" && reviewEntries.length > 0
-              ? { count: reviewEntries.length, onJump: scrollToReviewPanel }
-              : undefined
-          }
-        />
-      )}
     </section>
   );
 }
