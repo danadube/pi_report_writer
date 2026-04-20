@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatDate, getReportTypeLabel, getStatusLabel } from "@/lib/utils/reports";
 import { ReportStatus, type ReportListItem } from "@/types";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,8 @@ interface ReportsTableProps {
 }
 
 export function ReportsTable({ reports }: ReportsTableProps) {
+  const router = useRouter();
+
   if (reports.length === 0) {
     return (
       <div className="rounded-lg border border-[#2a2f42] bg-[#161922] p-12 text-center">
@@ -46,14 +49,19 @@ export function ReportsTable({ reports }: ReportsTableProps) {
             <th className="px-4 py-3 text-left text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
               Date
             </th>
-            <th className="px-4 py-3" />
+            <th className="px-4 py-3 text-right text-xs font-semibold text-[#8b90a0] uppercase tracking-wide">
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#1e2130]">
           {reports.map((report) => (
             <tr
               key={report.id}
-              className="hover:bg-[#1e2130] transition-colors"
+              className="hover:bg-[#1e2130] transition-colors cursor-pointer"
+              onClick={() => {
+                router.push(`/dashboard/reports/${report.id}`);
+              }}
             >
               <td className="px-4 py-3 text-[#e8eaf0] font-medium">
                 {report.subject_name}
@@ -68,13 +76,21 @@ export function ReportsTable({ reports }: ReportsTableProps) {
               <td className="px-4 py-3 text-[#8b90a0]">
                 {formatDate(report.report_date)}
               </td>
-              <td className="px-4 py-3 text-right">
-                <Link
-                  href={`/dashboard/reports/${report.id}`}
-                  className="text-[#4f7ef5] text-xs hover:underline"
-                >
-                  View
-                </Link>
+              <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                  <Link
+                    href={`/dashboard/reports/${report.id}/edit`}
+                    className="text-xs text-[#8b90a0] hover:text-[#e8eaf0] hover:underline"
+                  >
+                    Edit details
+                  </Link>
+                  <Link
+                    href={`/dashboard/reports/${report.id}`}
+                    className="text-sm font-medium text-[#4f7ef5] hover:underline"
+                  >
+                    Open workspace
+                  </Link>
+                </div>
               </td>
             </tr>
           ))}

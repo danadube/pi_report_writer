@@ -73,7 +73,7 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
           </h1>
           <p className="text-sm text-[#8b90a0] mt-0.5">{report.case_name || "—"}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 justify-end">
           <Link
             href={`/dashboard/reports/${report.id}/print`}
             className="inline-flex items-center gap-1.5 rounded-md border border-[#2a2f42] px-3 py-2 text-sm text-[#8b90a0] hover:bg-[#1e2130] transition-colors"
@@ -83,10 +83,10 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
           </Link>
           <Link
             href={`/dashboard/reports/${report.id}/edit`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-[#4f7ef5] px-3 py-2 text-sm font-medium text-white hover:bg-[#3d6de0] transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#2a2f42] px-3 py-2 text-sm text-[#8b90a0] hover:bg-[#1e2130] hover:text-[#e8eaf0] transition-colors"
           >
             <Pencil size={14} />
-            Edit
+            Edit details
           </Link>
         </div>
       </div>

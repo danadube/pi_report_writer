@@ -57,6 +57,13 @@ export function ReportsListSection() {
               ? "Loading…"
               : `${count} report${count !== 1 ? "s" : ""}`}
           </p>
+          {!loading ? (
+            <p className="text-sm text-[#6b7080] mt-2 max-w-2xl">
+              Open a report to work in the workspace. Use{" "}
+              <span className="text-[#8b90a0]">Edit details</span> when you only
+              need case or metadata changes.
+            </p>
+          ) : null}
         </div>
         <Link
           href="/dashboard/reports/new"

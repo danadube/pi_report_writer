@@ -66,7 +66,7 @@ export function LastWorkedReportCard() {
           href={`/dashboard/reports/${encodeURIComponent(snapshot.id)}`}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md bg-[#4f7ef5] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#3d6de0] transition-colors"
         >
-          Continue
+          Open workspace
           <ArrowRight size={16} aria-hidden />
         </Link>
       </div>
